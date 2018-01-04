@@ -1,0 +1,5 @@
+BreakBeforeBraces: Attach
+IndentCaseLabels: true
+UseTab: Never
+IndentWidth: 4
+ColumnLimit: 0
