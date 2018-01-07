@@ -8,7 +8,7 @@ class Comm {
 private:
 HTTPClient *http;
 public:
-Comm();
+Comm(String ipAddress, String port);
 String sendAndWaitForResponse(String packet);
 String send(String packet);
 };

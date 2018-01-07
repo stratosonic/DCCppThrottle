@@ -16,20 +16,13 @@
 #include "Train/Train.h"
 #include "Turnout/Turnout.h"
 
-#include "Graphics.c"
-
 // clang-format off
 
 // Set to 1 for extra debug messages to serial out
 #define DEBUG 0
 
-//#define VERSION "V0.1"
-
 #if defined ESP32
 hw_timer_t * timer = NULL;
-
-//const char* ssid = SSID_NAME;
-//const char* password = SSID_PASSWORD;
 
 #endif
 
@@ -97,7 +90,6 @@ volatile byte pressedButton[NUMBER_OF_BUTTONS], justPressedButton[NUMBER_OF_BUTT
 
 #if defined ESP32
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-portMUX_TYPE mutex = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
 volatile boolean encoderHalfLeft = false; // Used in both interrupt routines
@@ -108,9 +100,7 @@ volatile boolean encoderAccelerated = false;
 volatile byte encoderCount = 0;
 volatile byte lastEncoded = 0;
 
-Comm *comm = new Comm();
-//Comm::mutex = portMUX_INITIALIZER_UNLOCKED;
-//portMUX_TYPE Comm::sendMutex = portMUX_INITIALIZER_UNLOCKED;
+Comm *comm = new Comm("192.168.1.120", "2560");
 
 #define MAX_COMMAND_LENGTH 255
 char commandString[MAX_COMMAND_LENGTH];
@@ -407,6 +397,7 @@ void readResponse(String response) {
         }
     }
 }
+
 void loop(void) {
 
     if (previousDisplayState != displayState) {
@@ -739,40 +730,6 @@ void onTimer1() {
 }
 #endif
 
-// http://bildr.org/2012/08/rotary-encoder-arduino/
-/*void updateEncoder(){
-    portENTER_CRITICAL(&mux);
-    byte tempEncoderstate = ENCODER_STATE_NULL;
-
-    byte MSB = digitalRead(ENCODER_PIN_1); //MSB = most significant bit
-    byte LSB = digitalRead(ENCODER_PIN_2); //LSB = least significant bit
-
-    byte encoded = (MSB << 1) | LSB; //converting the 2 pin value to single number
-    byte sum = (lastEncoded << 2) | encoded; //adding it to the previous encoded value
-    if(sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
-        tempEncoderstate = PREVIOUS;
-        encoderCount++;
-    }
-    if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
-        tempEncoderstate = NEXT;
-        encoderCount++;
-    }
-    lastEncoded = encoded; //store this value for next time
-    if(encoderCount > 3) {
-        encoderCount = 0;
-        encoderState = tempEncoderstate;
-
-        int millisSinceLastChange = millis() - encoderLastChange;
-        if (millisSinceLastChange < 50) {
-            encoderAccelerated = true;
-        } else {
-            encoderAccelerated = false;
-        }
-        encoderLastChange = millis();
-    }
-    portEXIT_CRITICAL(&mux);
-   }*/
-
 void encoderPin1Interrupt() { // Pin went LOW
     #if defined ARDUINO_AVR_MEGA2560
     delay(1);     // Debounce time
@@ -975,9 +932,6 @@ void drawPreferencesView() {
     tft.setTextColor(ILI9341_WHITE);
     tft.setTextSize(2);
     tft.println(title);
-
-    //tft.println();
-    //tft.println("IP Adrs: 192.168.1.150");
 }
 
 template <typename T>
@@ -1339,46 +1293,6 @@ void updateTrainFunctions(Train *train) {
 
     previouslySelectedFunctionNumber = train->activeFunction;
 }
-
-/*
-   void editTrainNumber(int trainNumber, int indexToEdit) {
-    int trainNumberPositionTopLeftX = 60;
-
-    tft.fillRect(16 + (indexToEdit * 12) - 1, trainNumberPositionTopLeftX + 5, 10+2, 16, ILI9341_LIGHTGREY);         // fill in the background of the box so we can overwrite it
-
-    tft.setCursor(16 + (indexToEdit * 12), trainNumberPositionTopLeftX + 6);
-    tft.setTextColor(ILI9341_BLACK);
-    tft.setTextSize(2);
-    tft.println("9");
-    char trainNumberValue[5] = "";
-    sprintf(trainNumberValue, "%04d", trainNumber);
-    tft.println(trainNumberValue);
-   }*/
-/*
-   sendTrainCommand(trains[0]);
-   trains[0].speed = 100;
-   trains[0].direction = TRAIN_REVERSE;
-   sendTrainCommand(trains[0]);
-
-   editTrainNumber(trains[0].address, 0);
-   delay(1000);
-   drawTrainNumber(trains[0].address);
-   delay(1000);
-
-   editTrainNumber(trains[0].address, 1);
-   delay(1000);
-   drawTrainNumber(trains[0].address);
-   delay(1000);
-
-   editTrainNumber(trains[0].address, 2);
-   delay(1000);
-   drawTrainNumber(trains[0].address);
-   delay(1000);
-
-   editTrainNumber(trains[0].address, 3);
-   delay(1000);
-   drawTrainNumber(trains[0].address);
-   delay(1000);*/
 
 void clearView() {
     tft.fillRect(0, MAIN_VIEW_TOP_Y, 320, 220, ILI9341_BLACK);

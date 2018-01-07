@@ -12,8 +12,6 @@
 
 #elif defined COMM_WIFI
 
-//#define COMMUNICATION X
-
 
 #endif
 

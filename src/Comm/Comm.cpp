@@ -8,10 +8,13 @@
 #include <WiFiClientSecure.h>
 #endif
 
-Comm::Comm() {
+Comm::Comm(String ipAddress, String port) {
+    #if defined ESP32
     this->http = new HTTPClient();
-    this->http->begin("http://192.168.1.120:2560/");
+    this->http->begin("http://" + ipAddress + ":" + port);
+    //this->http->begin("http://192.168.1.120:2560/");
     this->http->setReuse(true);
+    #endif
 }
 
 String Comm::send(String packet) {
