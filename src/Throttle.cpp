@@ -419,7 +419,7 @@ void readResponse(String response) {
         int c = buffer[i]; //Serial.read();
 
         if (c == '<') { // start of new command
-            sprintf(commandString, "");
+            commandString[0] = '\0';
         } else if (c == '>') { // end of new command
             //Serial.print("Parsing: ");
             //Serial.println(commandString);
@@ -1598,7 +1598,7 @@ void parseCommand(char *command) {
     }
 }
 
-void parseX(char *command) {
+/*void parseX(char *command) {
 
     int trainRegister = 0;
     int speed = 0;
@@ -1606,8 +1606,8 @@ void parseX(char *command) {
 
     Serial.print("command: ");
     Serial.println(&command[1]);
-    sscanf(&command[1], "%d %d %d", &trainRegister, &speed, &direction);
-}
+    //sscanf(&command[1], "%d %d %d", &trainRegister, &speed, &direction);
+}*/
 
 void parseTCommand(char *command) {
     //Serial.print(F("Ignoring T command: "));

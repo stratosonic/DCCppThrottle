@@ -114,40 +114,38 @@ String Train::getFunctionCommand() {
         }
         functionTransmission += 128;
         functionTransmission = (byte)functionTransmission;
-        sprintf(output, "<f %d %lu>", this->address, functionTransmission);
+        sprintf(output, "<f %d %u>", this->address, functionTransmission);
     } else if (functionNumber < 9) {
         int mask = 15;
         functionTransmission = this->functions & mask << 5;
         functionTransmission = functionTransmission >> 5;
         functionTransmission += 176;
         functionTransmission = (int)functionTransmission;
-        sprintf(output, "<f %d %lu>", this->address, functionTransmission);
+        sprintf(output, "<f %d %u>", this->address, functionTransmission);
     } else if (functionNumber < 13) {
         int mask = 15;
         functionTransmission = this->functions & mask << 9;
         functionTransmission = functionTransmission >> 9;
         functionTransmission += 160;
         functionTransmission = (int)functionTransmission;
-        sprintf(output, "<f %d %lu>", this->address, functionTransmission);
+        sprintf(output, "<f %d %u>", this->address, functionTransmission);
     } else if (functionNumber < 21) {
         uint32_t mask = 255;
         functionTransmission = this->functions & mask << 13;
         functionTransmission = functionTransmission >> 13;
         functionTransmission = (uint32_t)functionTransmission;
-        sprintf(output, "<f %d %d %lu>", this->address, 222, functionTransmission);
+        sprintf(output, "<f %d %d %u>", this->address, 222, functionTransmission);
     } else {
         uint32_t mask = 255;
         functionTransmission = this->functions & mask << 21;
         functionTransmission = functionTransmission >> 21;
         functionTransmission = (uint32_t)functionTransmission;
-        sprintf(output, "<f %d %d %lu>", this->address, 223, functionTransmission);
+        sprintf(output, "<f %d %d %u>", this->address, 223, functionTransmission);
     }
-
-    Serial.print("Binary = ");
-    Serial.println(functionTransmission, BIN);
-
-    //Serial.print(output);
-    //Serial.println();
+    //Serial.print("Command: ");
+    //Serial.println(output);
+    //Serial.print("Binary = ");
+    //Serial.println(functionTransmission, BIN);
 
     return String(output);
 }

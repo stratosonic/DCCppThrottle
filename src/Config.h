@@ -1,6 +1,5 @@
 
 #include "Arduino.h"
-#include "CommConfig.h"
 
 #ifndef CONFIG_H
 #define CONFIG_H
