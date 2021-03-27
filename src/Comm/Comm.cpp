@@ -2,55 +2,71 @@
 #include "Arduino.h"
 #include "Config.h"
 
-#if defined ESP32
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
-#endif
+#include <WiFiClient.h>
 
-Comm::Comm(String ipAddress, String port) {
-    #if defined ESP32
-    this->http = new HTTPClient();
-    this->http->begin("http://" + ipAddress + ":" + port);
-    //this->http->begin("http://192.168.1.120:2560/");
-    this->http->setReuse(true);
-    #endif
+Comm::Comm(String ipAddress, uint16_t port) {
+
+    Serial.println("Connected in constructor.");
+
+    //vSemaphoreCreateBinary(this->xSemaphore);
+    this->xSemaphore = xSemaphoreCreateMutex();
+    sprintf(this->serverIp, ipAddress.c_str());
+    this->port = port;
 }
 
 String Comm::send(String packet) {
-
-    Serial.print("sending: ");
-    Serial.println(packet);
-
     String response = "<X>";
+    xSemaphoreTake(this->xSemaphore, portMAX_DELAY);
+    Serial.print("Got semaphore for send - ");
+    if (WiFi.status() == WL_CONNECTED) {
+        //Serial.print("connected - ");
 
-    #if defined ESP32
+        WiFiClient client;
 
-    if(WiFi.status()== WL_CONNECTED) {
-
-        http->addHeader("Content-Type", "text/plain");
-
-        this->http->setTimeout(1000);
-        int httpResponseCode = this->http->POST(packet);
-        if(httpResponseCode > 0) {
-            response = this->http->getString();
-            Serial.println(response);
+        if (!client.connect(this->serverIp, this->port)) {
+            Serial.print("Connection failed.");
+            return "<Z>";
         } else {
-            Serial.print("Error on sending POST: ");
-            Serial.println(httpResponseCode);
+            Serial.print("connected - ");
         }
-        this->http->end();
+
+        Serial.print("sending: ");
+        Serial.print(packet);
+
+        client.print(packet);
     } else {
         Serial.println("Error in WiFi connection");
     }
+    Serial.println("");
+    xSemaphoreGive(this->xSemaphore);
     return response;
-
-    #elif defined ARDUINO_AVR_MEGA2560
-    return "";
-    #endif
-
 }
 
 String Comm::sendAndWaitForResponse(String packet) {
     return "<0>";
+}
+
+String Comm::loop() {
+    xSemaphoreTake(this->xSemaphore, portMAX_DELAY);
+    Serial.print("Got semaphore for recieve - ");
+    WiFiClient client;
+    String response = "";
+    if (client.connect(this->serverIp, this->port)) {
+        Serial.print("connected - ");
+        if (client.available() > 0) {
+            Serial.print("response available - ");
+
+            //int count = client.read(buffer, MAX_ETH_BUFFER);
+            response = client.readString();
+            //buffer[count] = '\0'; // terminate the string properly
+
+            //response = client.read();
+            // Serial.println("res: " + response);
+        }
+    }
+    Serial.println("");
+    xSemaphoreGive(this->xSemaphore);
+
+    return response;
 }

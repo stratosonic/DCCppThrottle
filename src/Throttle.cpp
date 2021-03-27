@@ -1,36 +1,33 @@
-#include "Adafruit_GFX.h"
-#include "Adafruit_ILI9341.h"
-#include "SPI.h"
 #include <Arduino.h>
-#include <LinkedList.h>
-
-#if defined ESP32
-#include <WiFi.h>
 #include <HTTPClient.h>
-#endif
+#include <LinkedList.h>
+#include <WiFi.h>
 
 #include "Accessory/Accessory.h"
+#include "Adafruit_GFX.h"
+#include "Adafruit_ILI9341.h"
+#include "AiEsp32RotaryEncoder.h"
 #include "Comm/Comm.h"
 #include "Config.h"
+#include "SPI.h"
 #include "Sensor/Sensor.h"
+#include "SpeedIndicator/SpeedIndicator.h"
 #include "Train/Train.h"
 #include "Turnout/Turnout.h"
+#include <RunningMedian.h>
 
 // clang-format off
 
 // Set to 1 for extra debug messages to serial out
-#define DEBUG 0
+#define DEBUG 1
 
-#if defined ESP32
 hw_timer_t * timer = NULL;
-
-#endif
 
 // Use hardware SPI
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
 
 //tft.color565(0,0,0);
-#define ILI9341_DARKRED 0xB000 /* 22, 0, 0 */
+#define ILI9341_DARKRED    0xB000 /* 22, 0, 0 */
 #define ILI9341_DARKERGREY 0x38E7 /* 00111000 11100111 */
 
 #define SCREEN_WIDTH   320
@@ -62,7 +59,7 @@ String footerButtonsLabel[] = {"", "", ""};
 
 #define BUTTON_DEBOUNCE_MS       10 // how many ms to debounce
 
-#define ENCODER_BUTTON_PIN       ENCODER_PIN
+#define ENCODER_BUTTON_PIN       ROTARY_ENCODER_BUTTON_PIN
 #define FOOTER_BUTTON_LEFT_PIN   FOOTER_LEFT_PIN
 #define FOOTER_BUTTON_MIDDLE_PIN FOOTER_MIDDLE_PIN
 #define FOOTER_BUTTON_RIGHT_PIN  FOOTER_RIGHT_PIN
@@ -88,19 +85,26 @@ volatile byte pressedButton[NUMBER_OF_BUTTONS], justPressedButton[NUMBER_OF_BUTT
 #define TRACK_POWER_BUTTON_JUST_PRESSED   justReleasedButton[4]
 #define MENU_BUTTON_JUST_PRESSED          justReleasedButton[5]
 
-#if defined ESP32
-portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-#endif
+#define ROTARY_ENCODER_STEPS 4
+#define ROTARY_ENCODER_VCC_PIN -1
 
-volatile boolean encoderHalfLeft = false; // Used in both interrupt routines
-volatile boolean encoderHalfRight = false;
-volatile int encoderLastChange = 0;
-volatile boolean encoderAccelerated = false;
+AiEsp32RotaryEncoder rotaryEncoder = 
+     AiEsp32RotaryEncoder(
+        ROTARY_ENCODER_A_PIN, 
+        ROTARY_ENCODER_B_PIN, 
+        ROTARY_ENCODER_BUTTON_PIN, 
+        ROTARY_ENCODER_VCC_PIN, 
+        ROTARY_ENCODER_STEPS);
 
-volatile byte encoderCount = 0;
-volatile byte lastEncoded = 0;
+#define ROT_ENC_TRAIN_SPEED_MIN -126
+#define ROT_ENC_TRAIN_SPEED_MAX 126
+#define ROT_ENC_TRAIN_ACCEL 300
+#define ROT_ENC_MENU_MIN -1
+#define ROT_ENC_MENU_MAX 5
+#define ROT_ENC_MENU_ACCEL 0
 
-Comm *comm = new Comm("192.168.1.120", "2560");
+//Comm *comm = new Comm("192.168.1.120", "2560");
+Comm *comm;
 
 #define MAX_COMMAND_LENGTH 255
 char commandString[MAX_COMMAND_LENGTH];
@@ -110,6 +114,7 @@ char commandString[MAX_COMMAND_LENGTH];
 bool trackPower = TRACK_POWER_OFF;
 
 // counter for how ofter to check track current
+RunningMedian trackCurrentSamples = RunningMedian(5);
 #define TRACK_CURRENT_REQUEST_FREQUENCY 100  // 100 = once per second
 int trackCurrentCounter = 0;
 float trackCurrent = 0.0;
@@ -154,23 +159,22 @@ int8_t previousSensor = 0;
 #define SENSOR_ROWS 2
 #define SENSOR_COLUMNS 3
 
-char spinnerArray[] = {'-', '|', '/', '-', '\\', '|', '/'};
+char spinnerArray[] = {'-', '\\', '|', '/', '-', '\\', '|', '/'};
 byte spinnerArrayPointer = 0;
 
 // clang-format on
 
 //////
-#if defined ESP32
 void onTimer1();
-#endif
+
+void sendTask(void *parameter);
+void receiveTask(void *parameter);
 
 void drawSpinner();
 void drawStartView();
 void drawStartViewContinue();
 void parseCommand(char *);
 void updateEncoder();
-void encoderPin1Interrupt();
-void encoderPin2Interrupt();
 void buttonScan();
 void clearPreviousMenuSelection();
 void clearView();
@@ -204,17 +208,44 @@ void sendCurrentRequestCommand();
 void sendTrainCommand(Train *);
 void drawTrackPower();
 void drawTrackCurrent();
-void drawWifiSybol(int, int, bool);
+void drawWifiSymbol(int, int);
 void drawBattery(int, int, byte);
 void parseTCommand(char *command);
 void parseHCommand(char *command);
-Train *getTrainByRegister(byte trainRegister);
 void enableTimerInterrupt();
 void disableTimerInterrupt();
 void readResponse(String response);
+void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel);
+void send(String packet);
+void resetGauge(void *parameter);
+void moveGauge(void *parameter);
 /////
 
+enum WifiStrength { EXCELLENT,
+                    FAIR,
+                    POOR,
+                    NONE };
+WifiStrength wifiStrength = NONE;
+WifiStrength prevWifiStrength = NONE;
+int wifiSymbolCounter = 0;
+int8_t rssi = 0;
 HTTPClient *http;
+xSemaphoreHandle sendReceiveSemaphore;
+WiFiClient wclient;
+IPAddress serverip(192, 168, 4, 1);
+
+#define MAX_ETH_BUFFER 2048
+char recieveBuffer[MAX_ETH_BUFFER];
+
+LinkedList<String> outgoingCommands = LinkedList<String>();
+
+unsigned long wifiClientTimeout = 0;
+
+xSemaphoreHandle speedIndicatorSemaphore;
+SpeedIndicator *speedIndicator;
+int8_t speedIndicatorValue = 0;
+
+void rotary_onButtonClick() {}
 
 void setup() {
     Serial.begin(115200);
@@ -228,41 +259,35 @@ void setup() {
 
     drawStartView();
 
-    #if defined ESP32
-
     // First disconnect so reconnection will work
     WiFi.disconnect(false);
 
+    // Initialize Speed Indicator
+    speedIndicatorSemaphore = xSemaphoreCreateMutex();
+    speedIndicator = new SpeedIndicator(SPD_INDICATOR_STEP_PIN, SPD_INDICATOR_DIR_PIN);
+    xTaskCreate(resetGauge, "ResetGauge", 1024, NULL, 1, NULL);
+
     //Delay approx 4 seconds before calling the WiFi.begin
-    for(byte i = 0; i < 53; i++) {
+    for (byte i = 0; i < 53; i++) {
         drawSpinner();
         delay(75);
     }
 
     WiFi.begin(SSID_NAME, SSID_PASSWORD);
 
-    while (WiFi.status() != WL_CONNECTED) {   //Check for the connection
+    while (WiFi.status() != WL_CONNECTED) { //Check for the connection
         drawSpinner();
         delay(75);
-        Serial.println("Connecting to WiFi..");
+        Serial.println(F("Connecting to WiFi.."));
     }
+    Serial.println(F("Connected to WiFi network"));
 
-    Serial.println("Connected to the WiFi network");
-
-    //WiFi.RSSI();
-
-    #endif
-
-    pinMode(ENCODER_PIN_1, INPUT_PULLUP);
-    pinMode(ENCODER_PIN_2, INPUT_PULLUP);
-
-#if defined ARDUINO_AVR_MEGA2560
-    attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_1), encoderPin1Interrupt, FALLING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_2), encoderPin2Interrupt, FALLING);
-#elif defined ESP32
-    attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_1), encoderPin2Interrupt, FALLING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_2), encoderPin1Interrupt, FALLING);
-#endif
+    //we must initialize rotary encoder
+    rotaryEncoder.begin();
+    rotaryEncoder.setup(
+        [] { rotaryEncoder.readEncoder_ISR(); },
+        [] { rotary_onButtonClick(); });
+    resetRotaryEncoderValues(0, ROT_ENC_TRAIN_SPEED_MIN, ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
 
     // Set ports for buttons to inputs with internal pullup
     for (byte i = 0; i < NUMBER_OF_BUTTONS; i++) {
@@ -272,9 +297,9 @@ void setup() {
     // ----------  Add Trains  ---------- //
     Train *train1 = new Train(1, 8671, MAX_NUMBER_OF_TRAIN_FUNCTIONS);
     trainList.add(train1);
-    Train *train2 = new Train(2, 1234, MAX_NUMBER_OF_TRAIN_FUNCTIONS);
+    Train *train2 = new Train(1, 1234, MAX_NUMBER_OF_TRAIN_FUNCTIONS);
     trainList.add(train2);
-    Train *train3 = new Train(3, 10035, 8);
+    Train *train3 = new Train(1, 10035, 8);
     trainList.add(train3);
     currentTrain = trainList.get(currentTrainIndex);
 
@@ -310,54 +335,64 @@ void setup() {
         Serial.println(F("Done with setup"));
     }
 
-    // Send status request
-    readResponse(comm->send("<s>"));
-    // Request all defined turnouts
-    readResponse(comm->send("<T>"));
-    // Request all defined Sensors
-    readResponse(comm->send("<S>"));
-    // Request all defined output pins
-    readResponse(comm->send("<Z>"));
-    // Status of all sensors ???
-    readResponse(comm->send("<Q>"));
-
-    #if defined ARDUINO_AVR_MEGA2560
-    // http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
-    // TIMER 1 for interrupt frequency 100 Hz:
-    cli();     // stop interrupts
-    TCCR1A = 0;     // set entire TCCR1A register to 0
-    TCCR1B = 0;     // same for TCCR1B
-    TCNT1 = 0;     // initialize counter value to 0
-    // set compare match register for 100 Hz increments
-    OCR1A = 19999;     // = 16000000 / (8 * 100) - 1 (must be <65536)
-    // turn on CTC mode
-    TCCR1B |= (1 << WGM12);
-    // Set CS12, CS11 and CS10 bits for 8 prescaler
-    TCCR1B |= (0 << CS12) | (1 << CS11) | (0 << CS10);
-    // enable timer compare interrupt
-    TIMSK1 |= (1 << OCIE1A);
-    sei();     // allow interrupts
-
-    #elif defined ESP32
     // https://techtutorialsx.com/2017/10/07/esp32-arduino-timer-interrupts/
     // TIMER 1 for interrupt frequency of 100 Hz:
     // Clock frequency: 80Mhz
     // 80,000,000 / 8000 / 100 = 100 Hz
 
-    timer = timerBegin(0, 8000, true);     // 80000000 / 8000 (must be <65536) = 10000 Hz
+    timer = timerBegin(0, 8000, true); // 80000000 / 8000 (must be <65536) = 10000 Hz
     enableTimerInterrupt();
-
-    #endif
 
     // hide spinner
     tft.fillRect(152, 130, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
 
     drawStartViewContinue();
+
+    //comm = new Comm("192.168.1.120", 2560);
+
+    sendReceiveSemaphore = xSemaphoreCreateMutex();
+
+    wclient.connect(serverip, 2560);
+
+    //xBinarySemaphore = xSemaphoreCreateBinary();
+
+    xTaskCreatePinnedToCore(
+        sendTask,   /* Function to implement the task */
+        "SendTask", /* Name of the task */
+        10000,      /* Stack size in words */
+        NULL,       /* Task input parameter */
+        10,         /* Priority of the task */
+        NULL,       /* Task handle. */
+        0);         /* Core where the task should run */
+
+    xTaskCreatePinnedToCore(
+        receiveTask,   /* Function to implement the task */
+        "ReceiveTask", /* Name of the task */
+        10000,         /* Stack size in words */
+        NULL,          /* Task input parameter */
+        10,            /* Priority of the task */
+        NULL,          /* Task handle. */
+        1);            /* Core where the task should run */
+
+    // Send status request
+    send("<s>");
+
+    // Request all defined turnouts
+    send("<T>");
+
+    // Request all defined Sensors
+    send("<S>");
+
+    // Request all defined output pins
+    send("<Z>");
+
+    // Status of all sensors ???
+    send("<Q>");
 }
 
 void enableTimerInterrupt() {
     timerAttachInterrupt(timer, &onTimer1, true);
-    timerAlarmWrite(timer, 100, true);     // 10000 / 100 = 100Hz
+    timerAlarmWrite(timer, 100, true); // 10000 / 100 = 100Hz
     timerAlarmEnable(timer);
 }
 
@@ -370,35 +405,107 @@ void drawSpinner() {
     tft.setCursor(152, 130);
     tft.print(spinnerArray[spinnerArrayPointer]);
     spinnerArrayPointer++;
-    if(spinnerArrayPointer >= 7) {
+    if (spinnerArrayPointer >= sizeof(spinnerArray)) {
         spinnerArrayPointer = 0;
     }
 }
 
 void readResponse(String response) {
-    Serial.print("Response: ");
-    Serial.println(response);
-
-    int bufferLength = response.length()+1;
+    int bufferLength = response.length() + 1;
     char buffer[bufferLength] = "";
     response.toCharArray(buffer, bufferLength);
 
-    for(int i = 0; i < bufferLength; i++) {
+    for (int i = 0; i < bufferLength; i++) {
         int c = buffer[i]; //Serial.read();
 
         if (c == '<') { // start of new command
             sprintf(commandString, "");
         } else if (c == '>') { // end of new command
-            Serial.print("Parsing: ");
-            Serial.println(commandString);
+            //Serial.print("Parsing: ");
+            //Serial.println(commandString);
             parseCommand(commandString);
         } else if (strlen(commandString) < MAX_COMMAND_LENGTH) { // if comandString still has space, append character just read from serial line
-            sprintf(commandString, "%s%c", commandString, c); // otherwise, character is ignored (but continue to look for '<' or '>')
+            sprintf(commandString, "%s%c", commandString, c);    // otherwise, character is ignored (but continue to look for '<' or '>')
         }
     }
 }
 
-void loop(void) {
+void sendTask(void *parameter) {
+    while (true) {
+
+        if (outgoingCommands.size() > 0) {
+            xSemaphoreTake(sendReceiveSemaphore, portMAX_DELAY);
+            //Serial.print("outgoingCommands size: ");
+            //Serial.println(outgoingCommands.size());
+            String packet = outgoingCommands.shift();
+            xSemaphoreGive(sendReceiveSemaphore);
+            // Serial.print("outgoing packet: ");
+            // Serial.println(packet);
+            // unsigned long start = micros();
+
+            wclient.write(packet.c_str());
+
+            // unsigned long end = micros();
+            // unsigned long time = end - start;
+            // Serial.print("send time: ");
+            // Serial.println(time);
+        }
+        //https://esp32.com/viewtopic.php?t=11371
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+
+void receiveTask(void *parameter) {
+    while (true) {
+        if (!wclient.connected()) {
+            Serial.println("reconnecting to server");
+            while (!wclient.connect(serverip, 2560)) {
+                Serial.print(".");
+            }
+        }
+
+        if (wclient.available() > 0) {
+            //wclient.setTimeout(10);
+            //unsigned long start = micros();
+            //wclient.setNoDelay(true);
+            //xSemaphoreTake(sendReceiveSemaphore, portMAX_DELAY);
+            int readBytes = wclient.readBytesUntil('>', recieveBuffer, MAX_ETH_BUFFER - 2);
+            //xSemaphoreGive(sendReceiveSemaphore);
+            //wclient.flush();
+            //unsigned long end = micros();
+            recieveBuffer[readBytes] = '>';
+            recieveBuffer[readBytes + 1] = '\0';
+            String response = String(recieveBuffer);
+            readResponse(response);
+
+            //Serial.println(recieveBuffer);
+            //wclient.setTimeout(wifiClientTimeout);
+            //unsigned long time = end - start;
+            //Serial.print("recv time: ");
+            //Serial.print(time);
+            //Serial.print(", readBytes: ");
+            //Serial.println(readBytes);
+        }
+
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+}
+
+void send(String packet) {
+    xSemaphoreTake(sendReceiveSemaphore, portMAX_DELAY);
+    //Serial.print("Sending: ");
+    //Serial.println(packet);
+    outgoingCommands.add(packet);
+    xSemaphoreGive(sendReceiveSemaphore);
+}
+
+void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel) {
+    rotaryEncoder.setEncoderValue(val);
+    rotaryEncoder.setBoundaries(min, max);
+    rotaryEncoder.setAcceleration(accel);
+}
+
+void loop() {
 
     if (previousDisplayState != displayState) {
         if (DEBUG == 1) {
@@ -408,11 +515,22 @@ void loop(void) {
         previousDisplayState = displayState;
     }
 
-    if (trackCurrentCounter >= 500) {
+    // 2 times per second
+    if (trackCurrentCounter >= 50) {
+        //Serial.print("free memory: ");
+        //Serial.println(xPortGetFreeHeapSize());
         disableTimerInterrupt();
         sendCurrentRequestCommand();
         trackCurrentCounter = 0;
         enableTimerInterrupt();
+    }
+
+    // Every second
+    if (wifiSymbolCounter >= 100) {
+        if (displayState != START) {
+            drawWifiSymbol(260, 4);
+        }
+        wifiSymbolCounter = 0;
     }
 
     // Check track power button every loop
@@ -422,7 +540,7 @@ void loop(void) {
             toggleTrackPower();
             sendTrackPowerCommand();
             drawTrackPower();
-            if(displayState == TRAIN_CONTROL) {
+            if (displayState == TRAIN_CONTROL) {
                 drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
             }
         }
@@ -433,361 +551,267 @@ void loop(void) {
     // Main state machine check
     switch (displayState) {
 
-    // ---------------------------------------------- //
-    case START:
-        if (ENCODER_BUTTON_JUST_PRESSED ||
-            FOOTER_BUTTON_LEFT_JUST_PRESSED ||
-            FOOTER_BUTTON_MIDDLE_JUST_PRESSED ||
-            FOOTER_BUTTON_RIGHT_JUST_PRESSED ||
-            TRACK_POWER_BUTTON_JUST_PRESSED ||
-            MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            clearView();
-            // Draw header background
-            drawHeader();
-            drawTrainView();
-
-            displayState = TRAIN_CONTROL;
-        }
-        break;
-
-    // --------------------- TRAIN_CONTROL ------------------------- //
-
-    case TRAIN_CONTROL:
-        if (FOOTER_BUTTON_LEFT_JUST_PRESSED) {
-            clearButtonStates();
-            currentTrainIndex++;
-            if (currentTrainIndex >= trainList.size()) {
-                currentTrainIndex = 0;
-            }
-            currentTrain = trainList.get(currentTrainIndex);
-            drawTrainView();
-        } else if (FOOTER_BUTTON_MIDDLE_JUST_PRESSED) {
-            clearButtonStates();
-            currentTrain->incrementActiveFunction();
-            updateTrainFunctions(currentTrain);
-        } else if (FOOTER_BUTTON_RIGHT_JUST_PRESSED) {
-            clearButtonStates();
-            comm->send(currentTrain->getFunctionCommand());
-            updateTrainFunctions(currentTrain);
-        } else if (MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            displayState = MENU;
-            clearView();
-            drawMenuView();
-        }
-
-        if (ENCODER_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-
-            if (currentTrain->getSpeed() > 0 || currentTrain->getSpeed() < 0) {
-                currentTrain->setSpeed(0);
-                drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
-            } else if (currentTrain->getSpeed() == 0) {
-                currentTrain->direction = !currentTrain->direction;
-            }
-            sendTrainCommand(currentTrain);
-            drawTrainDirection(currentTrain->direction);
-        }
-
-        switch (encoderState) {
-        case NEXT:
-            clearEncoderState();
-            currentTrainDirection = currentTrain->direction;
-            if (encoderAccelerated) {
-                currentTrain->increaseSpeed(10);
-            } else {
-                currentTrain->increaseSpeed(1);
-            }
-            drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
-            if (currentTrainDirection != currentTrain->direction) {
-                drawTrainDirection(currentTrain->direction);
-            }
-            sendTrainCommand(currentTrain);
-            break;
-
-        case PREVIOUS:
-            clearEncoderState();
-            currentTrainDirection = currentTrain->direction;
-            if (encoderAccelerated) {
-                currentTrain->decreaseSpeed(10);
-            } else {
-                currentTrain->decreaseSpeed(1);
-            }
-            drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
-            if (currentTrainDirection != currentTrain->direction) {
-                drawTrainDirection(currentTrain->direction);
-            }
-            sendTrainCommand(currentTrain);
-            break;
-
-        default:
-            break;
-        }
-        break;
-
-    // ---------------------- MENU ------------------------ //
-    case MENU:
-
-        switch (encoderState) {
-        case PREVIOUS:
-            clearEncoderState();
-            if (menuViewSelection == 0) {
-                menuViewSelection = NUMBER_OF_MENU_ITEMS - 1;
-            } else {
-                menuViewSelection--;
-            }
-            drawMenuItem();
-            break;
-        case NEXT:
-            clearEncoderState();
-            menuViewSelection++;
-            if (menuViewSelection > NUMBER_OF_MENU_ITEMS - 1) {
-                menuViewSelection = 0;
-            }
-            drawMenuItem();
-            break;
-        default:
-            break;
-        }
-
-        if (ENCODER_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            clearEncoderState();
-            clearView();
-            if (menuViewSelection == TRAIN_CONTROL) {
-                displayState = TRAIN_CONTROL;
+        // ---------------------------------------------- //
+        case START:
+            if (ENCODER_BUTTON_JUST_PRESSED ||
+                FOOTER_BUTTON_LEFT_JUST_PRESSED ||
+                FOOTER_BUTTON_MIDDLE_JUST_PRESSED ||
+                FOOTER_BUTTON_RIGHT_JUST_PRESSED ||
+                TRACK_POWER_BUTTON_JUST_PRESSED ||
+                MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                clearView();
+                // Draw header background
+                drawHeader();
                 drawTrainView();
-            } else if (menuViewSelection == TURNOUT) {
-                displayState = TURNOUT;
-                drawTurnoutView();
-            } else if (menuViewSelection == ACCESSORIES) {
-                displayState = ACCESSORIES;
-                drawAccessoriesView();
-            } else if (menuViewSelection == SENSORS) {
-                displayState = SENSORS;
-                drawSensorsView();
-            } else if (menuViewSelection == PREFERENCES) {
-                displayState = PREFERENCES;
-                drawPreferencesView();
+
+                displayState = TRAIN_CONTROL;
+                resetRotaryEncoderValues(currentTrain->getSpeed(), ROT_ENC_TRAIN_SPEED_MIN,
+                                         ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
             }
-        }
-
-        break;
-
-    // ---------------------- TURNOUT ------------------------ //
-    case TURNOUT:
-        if (MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            displayState = MENU;
-            clearView();
-            drawMenuView();
-        }
-
-        switch (encoderState) {
-
-        case PREVIOUS:
-            clearEncoderState();
-            selectedTurnout--;
-            if (selectedTurnout < 0) {
-                selectedTurnout = turnoutList.size() - 1;
-            }
-            drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
-            previousTurnout = selectedTurnout;
             break;
-        case NEXT:
-            clearEncoderState();
-            selectedTurnout++;
-            if (selectedTurnout > turnoutList.size() - 1) {
-                selectedTurnout = 0;
+
+            // --------------------- TRAIN_CONTROL ------------------------- //
+
+        case TRAIN_CONTROL:
+            if (FOOTER_BUTTON_LEFT_JUST_PRESSED) {
+                clearButtonStates();
+                currentTrainIndex++;
+                if (currentTrainIndex >= trainList.size()) {
+                    currentTrainIndex = 0;
+                }
+                currentTrain = trainList.get(currentTrainIndex);
+                drawTrainView();
+            } else if (FOOTER_BUTTON_MIDDLE_JUST_PRESSED) {
+                clearButtonStates();
+                currentTrain->incrementActiveFunction();
+                updateTrainFunctions(currentTrain);
+            } else if (FOOTER_BUTTON_RIGHT_JUST_PRESSED) {
+                clearButtonStates();
+                /*comm->*/ send(currentTrain->getFunctionCommand());
+                updateTrainFunctions(currentTrain);
+            } else if (MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                displayState = MENU;
+                resetRotaryEncoderValues(0, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL);
+                clearView();
+                drawMenuView();
             }
 
-            drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
-            previousTurnout = selectedTurnout;
+            if (ENCODER_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                rotaryEncoder.setEncoderValue(0);
+                if (currentTrain->getSpeed() > 0 || currentTrain->getSpeed() < 0) {
+                    currentTrain->setSpeed(0);
+                    drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
+                } else if (currentTrain->getSpeed() == 0) {
+                    currentTrain->direction = !currentTrain->direction;
+                }
+                sendTrainCommand(currentTrain);
+                drawTrainDirection(currentTrain->direction);
+            }
+
+            {
+                if (rotaryEncoder.encoderChanged()) {
+                    long currentTrainSpeed = rotaryEncoder.readEncoder();
+                    currentTrainDirection = currentTrain->direction;
+                    currentTrain->setSpeed(currentTrainSpeed);
+                    drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
+                    if (currentTrainDirection != currentTrain->direction) {
+                        drawTrainDirection(currentTrain->direction);
+                    }
+                    sendTrainCommand(currentTrain);
+                }
+            }
+
             break;
+
+        // ---------------------- MENU ------------------------ //
+        case MENU:
+            if (rotaryEncoder.encoderChanged()) {
+                long menuSelection = rotaryEncoder.readEncoder();
+                if (menuSelection < 0) {
+                    menuViewSelection = NUMBER_OF_MENU_ITEMS - 1;
+                    rotaryEncoder.setEncoderValue(NUMBER_OF_MENU_ITEMS - 1);
+                } else if (menuSelection > NUMBER_OF_MENU_ITEMS - 1) {
+                    menuViewSelection = 0;
+                    rotaryEncoder.setEncoderValue(0);
+                } else {
+                    menuViewSelection = menuSelection;
+                }
+                drawMenuItem();
+            }
+
+            if (ENCODER_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                clearEncoderState();
+                clearView();
+                if (menuViewSelection == TRAIN_CONTROL) {
+                    displayState = TRAIN_CONTROL;
+                    resetRotaryEncoderValues(currentTrain->getSpeed(), ROT_ENC_TRAIN_SPEED_MIN,
+                                             ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
+                    drawTrainView();
+                } else if (menuViewSelection == TURNOUT) {
+                    displayState = TURNOUT;
+                    resetRotaryEncoderValues(0, -1, turnoutList.size(), 0);
+                    drawTurnoutView();
+                } else if (menuViewSelection == ACCESSORIES) {
+                    displayState = ACCESSORIES;
+                    drawAccessoriesView();
+                } else if (menuViewSelection == SENSORS) {
+                    displayState = SENSORS;
+                    drawSensorsView();
+                } else if (menuViewSelection == PREFERENCES) {
+                    displayState = PREFERENCES;
+                    drawPreferencesView();
+                }
+            }
+
+            break;
+
+        // ---------------------- TURNOUT ------------------------ //
+        case TURNOUT:
+            if (MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                displayState = MENU;
+                clearView();
+                drawMenuView();
+            }
+
+            switch (encoderState) {
+
+                case PREVIOUS:
+                    clearEncoderState();
+                    selectedTurnout--;
+                    if (selectedTurnout < 0) {
+                        selectedTurnout = turnoutList.size() - 1;
+                    }
+                    drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
+                    previousTurnout = selectedTurnout;
+                    break;
+                case NEXT:
+                    clearEncoderState();
+                    selectedTurnout++;
+                    if (selectedTurnout > turnoutList.size() - 1) {
+                        selectedTurnout = 0;
+                    }
+
+                    drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
+                    previousTurnout = selectedTurnout;
+                    break;
+                default:
+                    break;
+            }
+
+            if (ENCODER_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                Turnout *turnout = turnoutList.get(selectedTurnout);
+                turnout->toggleActive();
+                drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
+            }
+            break;
+
+        // ---------------------- ACCESSORIES ------------------------ //
+        case ACCESSORIES:
+            if (MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                displayState = MENU;
+                clearView();
+                drawMenuView();
+            }
+
+            switch (encoderState) {
+                case PREVIOUS:
+                    clearEncoderState();
+                    if (selectedAccessory == 0) {
+                        selectedAccessory = accessoryList.size() - 1;
+                    } else {
+                        selectedAccessory--;
+                    }
+                    drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+                    previousAccessory = selectedAccessory;
+                    break;
+                case NEXT:
+                    clearEncoderState();
+                    selectedAccessory++;
+                    if (selectedAccessory > accessoryList.size() - 1) {
+                        selectedAccessory = 0;
+                    }
+                    drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+                    previousAccessory = selectedAccessory;
+                    break;
+                default:
+                    break;
+            }
+
+            if (ENCODER_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                Accessory *accessory = accessoryList.get(selectedAccessory);
+                accessory->toggleActive();
+                drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+            }
+            break;
+
+        // ----------------------- SENSORS ----------------------- //
+        case SENSORS:
+            if (MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                displayState = MENU;
+                clearView();
+                drawMenuView();
+            }
+
+            switch (encoderState) {
+                case PREVIOUS:
+                    clearEncoderState();
+                    if (selectedSensor == 0) {
+                        selectedSensor = sensorList.size() - 1;
+                    } else {
+                        selectedSensor--;
+                    }
+                    drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+                    previousSensor = selectedSensor;
+                    break;
+                case NEXT:
+                    clearEncoderState();
+                    selectedSensor++;
+                    if (selectedSensor > sensorList.size() - 1) {
+                        selectedSensor = 0;
+                    }
+                    drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+                    previousSensor = selectedSensor;
+                    break;
+                default:
+                    break;
+            }
+
+            if (ENCODER_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                Sensor *sensor = sensorList.get(selectedSensor);
+                sensor->toggleActive();
+                drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+            }
+            break;
+
+        // ----------------------- PREFERENCES ----------------------- //
+        case PREFERENCES:
+            if (MENU_BUTTON_JUST_PRESSED) {
+                clearButtonStates();
+                displayState = MENU;
+                clearView();
+                drawMenuView();
+            }
+            break;
+
         default:
             break;
-        }
-
-        if (ENCODER_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            Turnout *turnout = turnoutList.get(selectedTurnout);
-            turnout->toggleActive();
-            drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
-        }
-        break;
-
-    // ---------------------- ACCESSORIES ------------------------ //
-    case ACCESSORIES:
-        if (MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            displayState = MENU;
-            clearView();
-            drawMenuView();
-        }
-
-        switch (encoderState) {
-        case PREVIOUS:
-            clearEncoderState();
-            if (selectedAccessory == 0) {
-                selectedAccessory = accessoryList.size() - 1;
-            } else {
-                selectedAccessory--;
-            }
-            drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
-            previousAccessory = selectedAccessory;
-            break;
-        case NEXT:
-            clearEncoderState();
-            selectedAccessory++;
-            if (selectedAccessory > accessoryList.size() - 1) {
-                selectedAccessory = 0;
-            }
-            drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
-            previousAccessory = selectedAccessory;
-            break;
-        default:
-            break;
-        }
-
-        if (ENCODER_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            Accessory *accessory = accessoryList.get(selectedAccessory);
-            accessory->toggleActive();
-            drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
-        }
-        break;
-
-    // ----------------------- SENSORS ----------------------- //
-    case SENSORS:
-        if (MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            displayState = MENU;
-            clearView();
-            drawMenuView();
-        }
-
-        switch (encoderState) {
-        case PREVIOUS:
-            clearEncoderState();
-            if (selectedSensor == 0) {
-                selectedSensor = sensorList.size() - 1;
-            } else {
-                selectedSensor--;
-            }
-            drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
-            previousSensor = selectedSensor;
-            break;
-        case NEXT:
-            clearEncoderState();
-            selectedSensor++;
-            if (selectedSensor > sensorList.size() - 1) {
-                selectedSensor = 0;
-            }
-            drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
-            previousSensor = selectedSensor;
-            break;
-        default:
-            break;
-        }
-
-        if (ENCODER_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            Sensor *sensor = sensorList.get(selectedSensor);
-            sensor->toggleActive();
-            drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
-        }
-        break;
-
-    // ----------------------- PREFERENCES ----------------------- //
-    case PREFERENCES:
-        if (MENU_BUTTON_JUST_PRESSED) {
-            clearButtonStates();
-            displayState = MENU;
-            clearView();
-            drawMenuView();
-        }
-        break;
-
-    default:
-        break;
     }
 }
-
-// Timer 1 interrupt service routine
-#if defined ARDUINO_AVR_MEGA2560
-
-ISR(TIMER1_COMPA_vect) {
-    buttonScan();
-    trackCurrentCounter++;
-}
-
-#elif defined ESP32
 
 void onTimer1() {
     buttonScan();
     trackCurrentCounter++;
-}
-#endif
-
-void encoderPin1Interrupt() { // Pin went LOW
-    #if defined ARDUINO_AVR_MEGA2560
-    delay(1);     // Debounce time
-    #elif defined ESP32
-    portENTER_CRITICAL(&mux);
-    #endif
-
-    if (digitalRead(ENCODER_PIN_1) == LOW) { // Pin still LOW ?
-        if (digitalRead(ENCODER_PIN_2) == HIGH && encoderHalfRight == false) { // -->
-            encoderHalfRight = true; // One half click clockwise
-        }
-        if (digitalRead(ENCODER_PIN_2) == LOW && encoderHalfLeft == true) { // <--
-
-            int millisSinceLastChange = millis() - encoderLastChange;
-            if (millisSinceLastChange < 50) {
-                encoderAccelerated = true;
-            } else {
-                encoderAccelerated = false;
-            }
-            encoderLastChange = millis();
-            encoderHalfLeft = false; // One whole click counter-
-            encoderState = PREVIOUS;
-        }
-    }
-
-    #if defined ESP32
-    portEXIT_CRITICAL(&mux);
-    #endif
-}
-
-void encoderPin2Interrupt() { // Pin went LOW
-    #if defined ARDUINO_AVR_MEGA2560
-    delay(1);     // Debounce time
-    #elif defined ESP32
-    portENTER_CRITICAL(&mux);
-    #endif
-
-    if (digitalRead(ENCODER_PIN_2) == LOW) { // Pin still LOW ?
-        if (digitalRead(ENCODER_PIN_1) == HIGH && encoderHalfLeft == false) { // <--
-            encoderHalfLeft = true; // One half  click counter-
-        } // clockwise
-        if (digitalRead(ENCODER_PIN_1) == LOW && encoderHalfRight == true) { // -->
-
-            int millisSinceLastChange = millis() - encoderLastChange;
-            if (millisSinceLastChange < 50) {
-                encoderAccelerated = true;
-            } else {
-                encoderAccelerated = false;
-            }
-            encoderLastChange = millis();
-            encoderHalfRight = false; // One whole click clockwise
-            encoderState = NEXT;
-        }
-    }
-
-    #if defined ESP32
-    portEXIT_CRITICAL(&mux);
-    #endif
+    wifiSymbolCounter++;
 }
 
 void clearButtonStates() {
@@ -811,7 +835,6 @@ void drawHeader() {
     tft.setTextColor(ILI9341_WHITE);
     tft.print("A");
     drawTrackCurrent();
-    drawWifiSybol(260, 4, false);
     drawBattery(287, 6, BATTERY_FULL);
 }
 
@@ -831,12 +854,88 @@ void drawBattery(int x, int y, byte batteryLevel) {
     tft.fillRect(x + 2, y + 2, batteryLevel, BATTERY_HEIGHT - 4, batteryColor);
 }
 
-void drawWifiSybol(int x, int y, bool connected) {
+/**
+ * Draws the Wifi Symbol.
+ * 
+ *    > -50     excellent
+ *  -50 to -70  fair
+ *  -70 to -80  poor
+ *    < -80     no signal
+ * 
+ * @param x int x position of the symbol
+ * @param y int y position of the symbol
+ * @return
+ * 
+
+ */
+void drawWifiSymbol(int x, int y) {
+
+    //Serial.print("RSSI: ");
+    //Serial.println(rssi);
+
+    int8_t rssi = WiFi.RSSI();
+    if (rssi > -50) {
+        wifiStrength = EXCELLENT;
+    } else if (rssi > -70) {
+        wifiStrength = FAIR;
+    } else if (rssi > -80) {
+        wifiStrength = POOR;
+    } else {
+        wifiStrength = NONE;
+    }
+
+    if (prevWifiStrength == wifiStrength) {
+        return;
+    }
+    prevWifiStrength = wifiStrength;
+
+    bool connected = true;
+    if (WiFi.status() != WL_CONNECTED) {
+        connected = false;
+    }
+
     byte pixelSize = 2;
     int color = ILI9341_RED;
+
+    // excellent bar
     if (connected) {
-        color = ILI9341_GREEN;
+        if (rssi > -50) {
+            color = ILI9341_GREEN;
+        } else {
+            color = ILI9341_LIGHTGREY;
+        }
     }
+    tft.fillRect(x + (2 * pixelSize), y, 5 * pixelSize, pixelSize, color);
+    tft.fillRect(x + (1 * pixelSize), y + 1 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (7 * pixelSize), y + 1 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (0 * pixelSize), y + 2 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (8 * pixelSize), y + 2 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+
+    // fair bar
+    if (connected) {
+        if (rssi > -70) {
+            color = ILI9341_GREEN;
+        } else {
+            color = ILI9341_LIGHTGREY;
+        }
+    }
+    tft.fillRect(x + (3 * pixelSize), y + 2 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (2 * pixelSize), y + 3 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (6 * pixelSize), y + 3 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+
+    // weak bar
+    if (connected) {
+        if (rssi > -80) {
+            color = ILI9341_GREEN;
+        } else {
+            color = ILI9341_LIGHTGREY;
+        }
+    }
+    tft.fillRect(x + (4 * pixelSize), y + 4 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (3 * pixelSize), y + 5 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
+    tft.fillRect(x + (4 * pixelSize), y + 6 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+
+    /*
     // first row
     tft.fillRect(x + (2 * pixelSize), y, 5 * pixelSize, pixelSize, color);
     // second row
@@ -855,6 +954,7 @@ void drawWifiSybol(int x, int y, bool connected) {
     tft.fillRect(x + (3 * pixelSize), y + 5 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
     // seventh row
     tft.fillRect(x + (4 * pixelSize), y + 6 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
+    */
 }
 
 void drawStartView() {
@@ -938,8 +1038,8 @@ template <typename T>
 void drawBlockView(uint8_t numberOfRows, uint8_t numberOfColumns, LinkedList<T> *list, byte selectedIndex, byte lastIndex, bool drawAll) {
     byte count = 0;
     uint8_t leftAndRightEdgePadding = 20; // sum of left and right padding
-    uint8_t displayBoxHeight = 162; // available height for blocks
-    uint8_t padding = 10; // horizontal and vertical padding between blocks
+    uint8_t displayBoxHeight = 162;       // available height for blocks
+    uint8_t padding = 10;                 // horizontal and vertical padding between blocks
     int boxSpaceAvailableY = displayBoxHeight - ((numberOfRows - 1) * padding);
     uint8_t boxHeight = boxSpaceAvailableY / numberOfRows;
     int boxSpaceAvailableX = SCREEN_WIDTH - (((numberOfColumns - 1) * padding) + (leftAndRightEdgePadding));
@@ -1412,84 +1512,106 @@ void buttonScan() {
 }
 
 void toggleTrackPower() {
-    Serial.println("toggling track power");
     trackPower = !trackPower;
 }
 
 void sendTrackPowerCommand() {
     if (trackPower == TRACK_POWER_ON) {
-        readResponse(comm->send("<1>"));
+        send("<1>");
     } else {
-        String stopCommand = "";
+        rotaryEncoder.setEncoderValue(0);
         for (byte i = 0; i < trainList.size(); i++) {
             trainList.get(i)->setSpeed(0);
-            stopCommand += trainList.get(i)->getEmergencyStopCommand();
+            String stopCommand = trainList.get(i)->getEmergencyStopCommand();
+            send(stopCommand);
         }
-        stopCommand += "<0>";
-        readResponse(comm->send(stopCommand));
+        send("<0>");
     }
 }
 
+void resetGauge(void *parameter) {
+    xSemaphoreTake(speedIndicatorSemaphore, portMAX_DELAY);
+    speedIndicator->reset();
+    xSemaphoreGive(speedIndicatorSemaphore);
+    vTaskDelete(NULL);
+}
+
+void moveGauge(void *parameter) {
+    int8_t value = *((int8_t *)parameter);
+    xSemaphoreTake(speedIndicatorSemaphore, portMAX_DELAY);
+    speedIndicator->move(value);
+    xSemaphoreGive(speedIndicatorSemaphore);
+    vTaskDelete(NULL);
+}
+
 void sendTrainCommand(Train *train) {
-    readResponse(comm->send(train->getSpeedCommand()));
+    send(train->getSpeedCommand());
+    speedIndicatorValue = currentTrain->getSpeed();
+    if (currentTrain->getDirection() != 1) {
+        speedIndicatorValue = -speedIndicatorValue;
+    }
+    xTaskCreate(moveGauge, "MoveGauge", 1024, (void *)&speedIndicatorValue, 1, NULL);
 }
 
 void sendCurrentRequestCommand() {
-    readResponse(comm->send("<c>"));
+    send("<c>");
 }
 
 void parseCommand(char *command) {
 
     switch (command[0]) {
 
-    case 'T':
-        parseTCommand(command);
-        break;
+        case 'T':
+            parseTCommand(command);
+            break;
 
-    case 'H':
-        parseHCommand(command);
-        break;
+        case 'H':
+            parseHCommand(command);
+            break;
 
-    case 'p':
-        if (command[1] == '0') {
-            trackPower = TRACK_POWER_OFF;
-        } else if (command[1] == '1') {
-            trackPower = TRACK_POWER_ON;
-        } else if (command[1] == '2' || command[1] == '3') {
-            trackPower = TRACK_POWER_OFF;
-        }
-        if (displayState != START) {
-            drawTrackPower();
-        }
-        break;
+        case 'p':
+            if (command[1] == '0') {
+                trackPower = TRACK_POWER_OFF;
+            } else if (command[1] == '1') {
+                trackPower = TRACK_POWER_ON;
+            } else if (command[1] == '2' || command[1] == '3') {
+                trackPower = TRACK_POWER_OFF;
+            }
+            if (displayState != START) {
+                drawTrackPower();
+            }
+            break;
 
-    case 'a':
-        // remove the 'a' from the start of the value
-        char *commandTrimmed = &command[1];
-        trackCurrent = atof(commandTrimmed) / 100;
+        case 'a':
+            // remove the 'a' from the start of the value
+            //<a val>
+            //<c MeterName value C/V unit min max res warn>
+            char *commandTrimmed = &command[1];
+            float cur = atof(commandTrimmed) / 100;
+            trackCurrentSamples.add(cur);
+            trackCurrent = trackCurrentSamples.getAverage();
 
-        if (displayState != START) {
-            drawTrackCurrent();
-        }
-        break;
-
-
+            if (displayState != START) {
+                drawTrackCurrent();
+            }
+            break;
     }
 }
 
-void parseTCommand(char *command) {
+void parseX(char *command) {
+
     int trainRegister = 0;
     int speed = 0;
-    int direction = 0;
-    Train *train;
+    byte direction = 0;
 
+    Serial.print("command: ");
+    Serial.println(&command[1]);
     sscanf(&command[1], "%d %d %d", &trainRegister, &speed, &direction);
-    train = getTrainByRegister(trainRegister);
-    train->setSpeed(direction ? speed : speed * -1);
-    train->setDirection(direction);
+}
 
-    drawTrainSpeed(train->getSpeed(), train->getDirection());
-    drawTrainDirection(train->getDirection());
+void parseTCommand(char *command) {
+    //Serial.print(F("Ignoring T command: "));
+    //Serial.println(command);
 }
 
 void parseHCommand(char *command) {
@@ -1515,13 +1637,4 @@ void parseHCommand(char *command) {
     } else {
         Serial.println("long version");
     }
-}
-
-Train *getTrainByRegister(byte trainRegister) {
-    for (int i = 0; i < trainList.size(); i++) {
-        if (trainList.get(i)->getRegisterNumber() == trainRegister) {
-            return trainList.get(i);
-        }
-    }
-    return NULL;
 }

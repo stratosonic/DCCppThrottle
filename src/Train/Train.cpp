@@ -1,5 +1,5 @@
-#include "Arduino.h"
 #include "Train.h"
+#include "Arduino.h"
 
 Train::Train() {
     Train(0, 0, MAX_NUMBER_OF_TRAIN_FUNCTIONS);
@@ -12,7 +12,7 @@ Train::Train(byte registerIndex, int address, byte numberOfFunctions) {
     this->direction = TRAIN_FORWARD;
     this->numberOfFunctions = numberOfFunctions;
     this->activeFunction = 0;
-    this->functions = 0;     //0b1101011001101001101001001101011;
+    this->functions = 0; //0b1101011001101001101001001101011;
 }
 
 byte Train::getRegisterNumber() {
@@ -20,11 +20,12 @@ byte Train::getRegisterNumber() {
 }
 
 int8_t Train::getSpeed() {
-    return (int8_t) abs(this->speed);
+    return (int8_t)abs(this->speed);
 }
 
 void Train::setSpeed(int speed) {
     this->speed = speed;
+    this->direction = (this->speed >= 0) ? 1 : 0;
 }
 
 byte Train::getDirection() {
@@ -37,13 +38,13 @@ void Train::setDirection(byte direction) {
 void Train::increaseSpeed(byte increaseAmount) {
     this->speed += increaseAmount;
 
-    if(this->speed > MAX_FORWARD_SPEED) {
+    if (this->speed > MAX_FORWARD_SPEED) {
         this->speed = MAX_FORWARD_SPEED;
     }
 
-    if(this->speed > 0) {
+    if (this->speed > 0) {
         this->direction = TRAIN_FORWARD;
-    } else if(this->speed < 0 ) {
+    } else if (this->speed < 0) {
         this->direction = TRAIN_REVERSE;
     }
 }
@@ -51,11 +52,11 @@ void Train::increaseSpeed(byte increaseAmount) {
 void Train::decreaseSpeed(byte decreaseAmount) {
     this->speed -= decreaseAmount;
 
-    if(this->speed < MAX_REVERSE_SPEED) {
+    if (this->speed < MAX_REVERSE_SPEED) {
         this->speed = MAX_REVERSE_SPEED;
     }
 
-    if(this->speed > 0) {
+    if (this->speed > 0) {
         this->direction = TRAIN_FORWARD;
     } else if (this->speed < 0) {
         this->direction = TRAIN_REVERSE;
@@ -63,8 +64,13 @@ void Train::decreaseSpeed(byte decreaseAmount) {
 }
 
 String Train::getSpeedCommand() {
-    char output[19];
-    sprintf(output, "<t %d %d %d %d>", this->registerIndex, this->address, abs(this->speed), this->direction);
+    char output[30];
+
+    int16_t spd = this->speed;
+    if (spd < 0) {
+        spd = -spd;
+    }
+    sprintf(output, "<t %d %d %d %d>", this->registerIndex, this->address, spd, this->direction);
     return String(output);
 }
 
