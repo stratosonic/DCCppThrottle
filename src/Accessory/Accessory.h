@@ -4,15 +4,14 @@
 #ifndef ACCESSORY_H
 #define ACCESSORY_H
 
-
 class Accessory : public Component {
-private:
-int address;
-int subAddress;
-public:
-Accessory();
-Accessory(String name, int address, int subAddress);
-};
+  private:
+    int address;
+    int subAddress;
 
+  public:
+    Accessory();
+    Accessory(String name, int address, int subAddress);
+};
 
 #endif

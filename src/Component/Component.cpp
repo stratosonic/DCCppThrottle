@@ -1,5 +1,5 @@
-#include "Arduino.h"
 #include "Component.h"
+#include "Arduino.h"
 
 Component::Component() {
     this->active = false;

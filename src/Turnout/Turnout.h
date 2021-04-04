@@ -4,13 +4,12 @@
 #ifndef TURNOUT_H
 #define TURNOUT_H
 
-
 class Turnout : public Component {
-private:
-int id;
-public:
-Turnout(int id, String name);
-};
+  private:
+    int id;
 
+  public:
+    Turnout(int id, String name);
+};
 
 #endif

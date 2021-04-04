@@ -63,21 +63,16 @@ void Train::decreaseSpeed(byte decreaseAmount) {
     }
 }
 
-String Train::getSpeedCommand() {
-    char output[30];
-
+void Train::getSpeedCommand(char *command) {
     int16_t spd = this->speed;
     if (spd < 0) {
         spd = -spd;
     }
-    sprintf(output, "<t %d %d %d %d>", this->registerIndex, this->address, spd, this->direction);
-    return String(output);
+    sprintf(command, "<t %d %d %d %d>", this->registerIndex, this->address, spd, this->direction);
 }
 
-String Train::getEmergencyStopCommand() {
-    char output[19];
-    sprintf(output, "<t %d %d %d %d>", this->registerIndex, this->address, -1, this->direction);
-    return String(output);
+void Train::getEmergencyStopCommand(char *command) {
+    sprintf(command, "<t %d %d %d %d>", this->registerIndex, this->address, -1, this->direction);
 }
 
 void Train::incrementActiveFunction() {

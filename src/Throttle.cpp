@@ -55,7 +55,7 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
 #define FOOTER_BUTTON_MIDDLE 1
 #define FOOTER_BUTTON_RIGHT  2
 
-String footerButtonsLabel[] = {"", "", ""};
+char footerButtonsLabel[3][9] = {"", "", ""};
 
 #define BUTTON_DEBOUNCE_MS       10 // how many ms to debounce
 
@@ -137,6 +137,8 @@ EncoderState encoderState = NIL;
 
 byte previouslySelectedFunctionNumber = 28;
 
+byte currentTrainDirection = -1;
+
 LinkedList<Train *> trainList = LinkedList<Train *>();
 Train *currentTrain;
 byte currentTrainIndex = 0;
@@ -190,7 +192,7 @@ void drawAccessoriesView();
 void drawSensorsView();
 void drawPreferencesView();
 void drawCurrentMenuSelection();
-void drawFooterButtonsLabel(String, String, String);
+void drawFooterButtonsLabel(char *, char *, char *);
 template <typename T>
 void drawBlockView(uint8_t numberOfRows, uint8_t numberOfColumns, LinkedList<T> *list, byte selectedIndex, byte lastIndex, bool drawAll);
 void drawTrainRow(Train *);
@@ -199,8 +201,6 @@ void drawTrainDirection(byte);
 void drawTrainFunctions(Train *);
 void drawTrainSpeed(int, byte);
 void updateTrainFunctions(Train *);
-void drawTurnout(int, int, int, int, bool, String, bool);
-void drawTurnout();
 void drawTurnoutView();
 void toggleTrackPower();
 void sendTrackPowerCommand();
@@ -401,7 +401,8 @@ void disableTimerInterrupt() {
 }
 
 void drawSpinner() {
-    tft.fillRect(152, 130, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    //tft.fillRect(152, 130, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
     tft.setCursor(152, 130);
     tft.print(spinnerArray[spinnerArrayPointer]);
     spinnerArrayPointer++;
@@ -418,11 +419,9 @@ void readResponse(String response) {
     for (int i = 0; i < bufferLength; i++) {
         int c = buffer[i]; //Serial.read();
 
-        if (c == '<') { // start of new command
+        if (c == '<') { // start of new command, reset the string
             commandString[0] = '\0';
         } else if (c == '>') { // end of new command
-            //Serial.print("Parsing: ");
-            //Serial.println(commandString);
             parseCommand(commandString);
         } else if (strlen(commandString) < MAX_COMMAND_LENGTH) { // if comandString still has space, append character just read from serial line
             sprintf(commandString, "%s%c", commandString, c);    // otherwise, character is ignored (but continue to look for '<' or '>')
@@ -515,25 +514,7 @@ void loop() {
         previousDisplayState = displayState;
     }
 
-    // 2 times per second
-    if (trackCurrentCounter >= 50) {
-        //Serial.print("free memory: ");
-        //Serial.println(xPortGetFreeHeapSize());
-        disableTimerInterrupt();
-        sendCurrentRequestCommand();
-        trackCurrentCounter = 0;
-        enableTimerInterrupt();
-    }
-
-    // Every second
-    if (wifiSymbolCounter >= 100) {
-        if (displayState != START) {
-            drawWifiSymbol(260, 4);
-        }
-        wifiSymbolCounter = 0;
-    }
-
-    // Check track power button every loop
+    // Every loop
     if (displayState != START) {
         if (TRACK_POWER_BUTTON_JUST_PRESSED) {
             TRACK_POWER_BUTTON_JUST_PRESSED = 0;
@@ -546,7 +527,24 @@ void loop() {
         }
     }
 
-    byte currentTrainDirection = -1;
+    // 2Hz (2 times per second)
+    if (trackCurrentCounter >= 50) {
+        //Serial.print("free memory: ");
+        //Serial.println(xPortGetFreeHeapSize());
+        disableTimerInterrupt();
+        sendCurrentRequestCommand();
+        trackCurrentCounter = 0;
+        enableTimerInterrupt();
+        drawTrackCurrent();
+    }
+
+    // 1Hz (1 time per second)
+    if (wifiSymbolCounter >= 100) {
+        if (displayState != START) {
+            drawWifiSymbol(260, 4);
+        }
+        wifiSymbolCounter = 0;
+    }
 
     // Main state machine check
     switch (displayState) {
@@ -614,11 +612,11 @@ void loop() {
             {
                 if (rotaryEncoder.encoderChanged()) {
                     long currentTrainSpeed = rotaryEncoder.readEncoder();
-                    currentTrainDirection = currentTrain->direction;
                     currentTrain->setSpeed(currentTrainSpeed);
                     drawTrainSpeed(currentTrain->getSpeed(), currentTrain->direction);
                     if (currentTrainDirection != currentTrain->direction) {
                         drawTrainDirection(currentTrain->direction);
+                        currentTrainDirection = currentTrain->direction;
                     }
                     sendTrainCommand(currentTrain);
                 }
@@ -934,27 +932,6 @@ void drawWifiSymbol(int x, int y) {
     tft.fillRect(x + (4 * pixelSize), y + 4 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
     tft.fillRect(x + (3 * pixelSize), y + 5 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
     tft.fillRect(x + (4 * pixelSize), y + 6 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-
-    /*
-    // first row
-    tft.fillRect(x + (2 * pixelSize), y, 5 * pixelSize, pixelSize, color);
-    // second row
-    tft.fillRect(x + (1 * pixelSize), y + 1 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    tft.fillRect(x + (7 * pixelSize), y + 1 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    // third row
-    tft.fillRect(x + (0 * pixelSize), y + 2 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    tft.fillRect(x + (3 * pixelSize), y + 2 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
-    tft.fillRect(x + (8 * pixelSize), y + 2 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    // fourth row
-    tft.fillRect(x + (2 * pixelSize), y + 3 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    tft.fillRect(x + (6 * pixelSize), y + 3 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    // fifth row
-    tft.fillRect(x + (4 * pixelSize), y + 4 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    // sixth row
-    tft.fillRect(x + (3 * pixelSize), y + 5 * pixelSize, 3 * pixelSize, 1 * pixelSize, color);
-    // seventh row
-    tft.fillRect(x + (4 * pixelSize), y + 6 * pixelSize, 1 * pixelSize, 1 * pixelSize, color);
-    */
 }
 
 void drawStartView() {
@@ -983,17 +960,17 @@ void drawTrainView() {
     drawTrainRow(currentTrain);
 
     // Draw footer
-    drawFooterButtonsLabel("Next Trn", "Next Fnc", "Select");
+    drawFooterButtonsLabel((char *)"Next Trn", (char *)"Next Fnc", (char *)"Select");
 }
 
-int calculateXToCenter(String text, byte fontWidth) {
-    int widthOfText = text.length() * fontWidth;
+int calculateXToCenter(char *text, byte fontWidth) {
+    int widthOfText = strlen(text) * fontWidth;
     int x = SCREEN_WIDTH / 2 - widthOfText / 2;
     return x;
 }
 
 void drawTurnoutView() {
-    String title = "Turnouts";
+    char title[] = "Turnouts";
     int titleX = calculateXToCenter(title, FONT_SIZE_2_WIDTH);
     tft.setCursor(titleX, MAIN_VIEW_TOP_Y);
     tft.setTextColor(ILI9341_WHITE);
@@ -1004,7 +981,7 @@ void drawTurnoutView() {
 }
 
 void drawAccessoriesView() {
-    String title = "Accessories";
+    char title[] = "Accessories";
     int titleX = calculateXToCenter(title, FONT_SIZE_2_WIDTH);
     tft.setCursor(titleX, MAIN_VIEW_TOP_Y);
     tft.setTextColor(ILI9341_WHITE);
@@ -1015,7 +992,7 @@ void drawAccessoriesView() {
 }
 
 void drawSensorsView() {
-    String title = "Sensors";
+    char title[] = "Sensors";
     int titleX = calculateXToCenter(title, FONT_SIZE_2_WIDTH);
     tft.setCursor(titleX, MAIN_VIEW_TOP_Y);
     tft.setTextColor(ILI9341_WHITE);
@@ -1026,7 +1003,7 @@ void drawSensorsView() {
 }
 
 void drawPreferencesView() {
-    String title = "Preferences";
+    char title[] = "Preferences";
     int titleX = calculateXToCenter(title, FONT_SIZE_2_WIDTH);
     tft.setCursor(titleX, MAIN_VIEW_TOP_Y);
     tft.setTextColor(ILI9341_WHITE);
@@ -1081,15 +1058,15 @@ void drawBlockView(uint8_t numberOfRows, uint8_t numberOfColumns, LinkedList<T> 
                     byte innerPaddingY = boxHeight / 4;
                     if (thisComponent->isActive()) {
                         tft.fillRect(thisBlockX + innerPaddingX, thisBlockY + FONT_SIZE_2_HEIGHT + 6, innerPaddingX * 6, innerPaddingY * 2, ILI9341_DARKGREEN);
-                        String lOn = "On";
-                        tft.setCursor((thisBlockX + ((boxWidth / 2) - ((lOn.length() * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + FONT_SIZE_2_HEIGHT + 10);
+                        const char lOn[] = "On";
+                        tft.setCursor((thisBlockX + ((boxWidth / 2) - ((strlen(lOn) * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + FONT_SIZE_2_HEIGHT + 10);
                         tft.setTextColor(ILI9341_WHITE);
                         tft.print(lOn);
                     } else {
                         tft.fillRect(thisBlockX + innerPaddingX, thisBlockY + FONT_SIZE_2_HEIGHT + 6, innerPaddingX * 6, innerPaddingY * 2, ILI9341_DARKRED);
-                        String lOff = "Off";
+                        const char lOff[] = "Off";
                         tft.setTextColor(ILI9341_WHITE);
-                        tft.setCursor((thisBlockX + ((boxWidth / 2) - ((lOff.length() * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + FONT_SIZE_2_HEIGHT + 10);
+                        tft.setCursor((thisBlockX + ((boxWidth / 2) - ((strlen(lOff) * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + FONT_SIZE_2_HEIGHT + 10);
                         tft.print(lOff);
                     }
                 }
@@ -1099,11 +1076,11 @@ void drawBlockView(uint8_t numberOfRows, uint8_t numberOfColumns, LinkedList<T> 
     }
 }
 
-void drawFooterButtonsLabel(String button1Label, String button2Label, String button3Label) {
+void drawFooterButtonsLabel(char *button1Label, char *button2Label, char *button3Label) {
 
-    footerButtonsLabel[FOOTER_BUTTON_LEFT] = button1Label;
-    footerButtonsLabel[FOOTER_BUTTON_MIDDLE] = button2Label;
-    footerButtonsLabel[FOOTER_BUTTON_RIGHT] = button3Label;
+    strcpy(footerButtonsLabel[FOOTER_BUTTON_LEFT], button1Label);
+    strcpy(footerButtonsLabel[FOOTER_BUTTON_MIDDLE], button2Label);
+    strcpy(footerButtonsLabel[FOOTER_BUTTON_RIGHT], button3Label);
 
     int footerYPosition = 219;
     int buttonWidth = 100;
@@ -1115,31 +1092,31 @@ void drawFooterButtonsLabel(String button1Label, String button2Label, String but
     tft.setTextColor(ILI9341_WHITE);
     tft.setTextSize(2);
 
-    if (footerButtonsLabel[FOOTER_BUTTON_LEFT] != "") {
+    if (strcmp(footerButtonsLabel[FOOTER_BUTTON_LEFT], "")) {
         tft.fillRoundRect(0, footerYPosition, buttonWidth, buttonHeight, cornerRadius, FOOTER_BUTTON_COLOR);
-        int xPosition = buttonWidth / 2 - (footerButtonsLabel[FOOTER_BUTTON_LEFT].length() * widthOfLetter);
+        int xPosition = buttonWidth / 2 - (strlen(footerButtonsLabel[FOOTER_BUTTON_LEFT]) * widthOfLetter);
         tft.setCursor(xPosition, footerYPosition + 3);
         tft.println(footerButtonsLabel[FOOTER_BUTTON_LEFT]);
     }
 
-    if (footerButtonsLabel[FOOTER_BUTTON_MIDDLE] != "") {
+    if (strcmp(footerButtonsLabel[FOOTER_BUTTON_MIDDLE], "")) {
         tft.fillRoundRect(110, footerYPosition, buttonWidth, buttonHeight, cornerRadius, FOOTER_BUTTON_COLOR);
-        int xPosition = buttonWidth / 2 - (footerButtonsLabel[FOOTER_BUTTON_MIDDLE].length() * widthOfLetter);
+        int xPosition = buttonWidth / 2 - (strlen(footerButtonsLabel[FOOTER_BUTTON_MIDDLE]) * widthOfLetter);
         tft.setCursor(buttonWidth + paddingBetweenButtons + xPosition, footerYPosition + 3);
         tft.println(footerButtonsLabel[FOOTER_BUTTON_MIDDLE]);
     }
 
-    if (footerButtonsLabel[FOOTER_BUTTON_RIGHT] != "") {
+    if (strcmp(footerButtonsLabel[FOOTER_BUTTON_RIGHT], "")) {
         tft.fillRoundRect(220, footerYPosition, buttonWidth, buttonHeight, cornerRadius, FOOTER_BUTTON_COLOR);
-        int xPosition = buttonWidth / 2 - (footerButtonsLabel[FOOTER_BUTTON_RIGHT].length() * widthOfLetter);
+        int xPosition = buttonWidth / 2 - (strlen(footerButtonsLabel[FOOTER_BUTTON_RIGHT]) * widthOfLetter);
         tft.setCursor((buttonWidth + paddingBetweenButtons) * 2 + xPosition, footerYPosition + 3);
         tft.println(footerButtonsLabel[FOOTER_BUTTON_RIGHT]);
     }
 }
 
 void footerButtonHighlighted(int button, bool isHighlighted) {
-    String buttonLabel = footerButtonsLabel[button];
-    if (buttonLabel != "") {
+    char *buttonLabel = footerButtonsLabel[button];
+    if (strcmp(buttonLabel, "")) {
         int footerYPosition = 219;
         int buttonWidth = 100;
         int buttonHeight = 21;
@@ -1160,7 +1137,7 @@ void footerButtonHighlighted(int button, bool isHighlighted) {
         }
 
         tft.fillRoundRect(xPositionPadding, footerYPosition, buttonWidth, buttonHeight, cornerRadius, backgroundColor);
-        int xPosition = buttonWidth / 2 - (buttonLabel.length() * widthOfLetter);
+        int xPosition = buttonWidth / 2 - (strlen(buttonLabel) * widthOfLetter);
         tft.setCursor(xPositionPadding + xPosition, footerYPosition + 3);
         tft.setTextColor(ILI9341_WHITE);
         tft.setTextSize(2);
@@ -1184,12 +1161,12 @@ void clearFunctionRows() {
 void drawTrainNumber(int trainNumber) {
     int trainNumberPositionTopLeftX = MAIN_VIEW_TOP_Y;
 
-    tft.fillRect(12, trainNumberPositionTopLeftX + 2, 64, 22, ILI9341_BLACK); // fill in the background of the box so we can overwrite it
+    //tft.fillRect(12, trainNumberPositionTopLeftX + 2, 64, 22, ILI9341_BLACK); // fill in the background of the box so we can overwrite it
     tft.drawRect(10, trainNumberPositionTopLeftX, 68, 26, ILI9341_WHITE);
     tft.drawRect(11, trainNumberPositionTopLeftX + 1, 66, 24, ILI9341_WHITE);
 
     tft.setCursor(16, trainNumberPositionTopLeftX + 6);
-    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
     tft.setTextSize(2);
     char trainNumberValue[6] = "";
     sprintf(trainNumberValue, "%05d", trainNumber);
@@ -1198,34 +1175,32 @@ void drawTrainNumber(int trainNumber) {
 
 void drawTrainSpeed(int speed, byte direction) {
     tft.setCursor(85, MAIN_VIEW_TOP_Y + 6);
-    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
     tft.setTextSize(2);
     tft.print("Speed:");
     char output[4] = "";
     sprintf(output, "%03d", speed);
-    //if (output[0] != previousSpeed[0]) {
-    tft.fillRect(85 + (6 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
+
+    tft.setCursor(85 + (6 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6);
+    tft.print(output);
+    /*tft.fillRect(85 + (6 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
     tft.setCursor(85 + (6 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6);
     tft.print(output[0]);
-    //}
-    //if (output[1] != previousSpeed[1]) {
+
     tft.fillRect(85 + (7 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
     tft.setCursor(85 + (7 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6);
     tft.print(output[1]);
-    //}
-    //if (output[2] != previousSpeed[2]) {
+
     tft.fillRect(85 + (8 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
     tft.setCursor(85 + (8 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6);
-    tft.print(output[2]);
-    //}
+    tft.print(output[2]);*/
+
     sprintf(previousSpeed, "%03d", speed);
 
     ////
     int xIncrement = 7;
     int speedGraphValue = speed / 21;
-    //tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH), MAIN_VIEW_TOP_Y + 6, xIncrement * 7, 16, ILI9341_BLACK);
 
-    //if(direction == TRAIN_FORWARD) {
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 0), MAIN_VIEW_TOP_Y + 6 + 12, 5, 2, (speed > 0 ? ILI9341_GREEN : ILI9341_DARKGREY));
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 1), MAIN_VIEW_TOP_Y + 6 + 10, 5, 4, (speedGraphValue >= 1 ? ILI9341_GREEN : ILI9341_DARKGREY));
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 2), MAIN_VIEW_TOP_Y + 6 + 8, 5, 6, (speedGraphValue >= 2 ? ILI9341_GREEN : ILI9341_DARKGREY));
@@ -1233,27 +1208,17 @@ void drawTrainSpeed(int speed, byte direction) {
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 4), MAIN_VIEW_TOP_Y + 6 + 4, 5, 10, (speedGraphValue >= 4 ? ILI9341_GREEN : ILI9341_DARKGREY));
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 5), MAIN_VIEW_TOP_Y + 6 + 2, 5, 12, (speedGraphValue >= 5 ? ILI9341_GREEN : ILI9341_DARKGREY));
     tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement * 6), MAIN_VIEW_TOP_Y + 6 + 0, 5, 14, (speedGraphValue == 6 ? ILI9341_GREEN : ILI9341_DARKGREY));
-    /*} else {
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*6), MAIN_VIEW_TOP_Y + 6 + 12, 5,  2, (speed           >  0 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*5), MAIN_VIEW_TOP_Y + 6 + 10, 5,  4, (speedGraphValue >= 1 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*4), MAIN_VIEW_TOP_Y + 6 + 8,  5,  6, (speedGraphValue >= 2 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*3), MAIN_VIEW_TOP_Y + 6 + 6,  5,  8, (speedGraphValue >= 3 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*2), MAIN_VIEW_TOP_Y + 6 + 4,  5, 10, (speedGraphValue >= 4 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*1), MAIN_VIEW_TOP_Y + 6 + 2,  5, 12, (speedGraphValue >= 5 ? ILI9341_RED : ILI9341_DARKGREY));
-        tft.fillRect(80 + (10 * FONT_SIZE_2_WIDTH) + (xIncrement*0), MAIN_VIEW_TOP_Y + 6 + 0,  5, 14, (speedGraphValue == 6 ? ILI9341_RED : ILI9341_DARKGREY));
-       }
-     */
 }
 
 void drawTrainDirection(byte direction) {
-    tft.fillRect(260, MAIN_VIEW_TOP_Y + 6, 36, 16, ILI9341_BLACK);
+    //tft.fillRect(260, MAIN_VIEW_TOP_Y + 6, 36, 16, ILI9341_BLACK);
     tft.setCursor(260, MAIN_VIEW_TOP_Y + 6);
     tft.setTextSize(2);
     if (direction == TRAIN_FORWARD) {
-        tft.setTextColor(ILI9341_DARKGREEN);
+        tft.setTextColor(ILI9341_DARKGREEN, ILI9341_BLACK);
         tft.print("FWD");
     } else {
-        tft.setTextColor(ILI9341_DARKRED);
+        tft.setTextColor(ILI9341_DARKRED, ILI9341_BLACK);
         tft.print("REV");
     }
 }
@@ -1465,13 +1430,14 @@ void drawTrackPower() {
 }
 
 void drawTrackCurrent() {
-    tft.fillRect(FONT_SIZE_2_WIDTH * 13, 5, FONT_SIZE_2_WIDTH * 4, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setCursor(FONT_SIZE_2_WIDTH * 13, 5);
-    tft.setTextSize(2);
-    char amps[5] = "";
-    sprintf(amps, "%d.%02d", (int)trackCurrent, (int)(trackCurrent * 100) % 100);
-    tft.println(amps);
+    if (displayState != START) {
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+        tft.setCursor(FONT_SIZE_2_WIDTH * 13, 5);
+        tft.setTextSize(2);
+        char amps[5] = "";
+        sprintf(amps, "%d.%02d", (int)trackCurrent, (int)(trackCurrent * 100) % 100);
+        tft.println(amps);
+    }
 }
 
 void buttonScan() {
@@ -1522,10 +1488,13 @@ void sendTrackPowerCommand() {
         rotaryEncoder.setEncoderValue(0);
         for (byte i = 0; i < trainList.size(); i++) {
             trainList.get(i)->setSpeed(0);
-            String stopCommand = trainList.get(i)->getEmergencyStopCommand();
+            char stopCommand[19];
+            trainList.get(i)->getEmergencyStopCommand(stopCommand);
             send(stopCommand);
         }
         send("<0>");
+        speedIndicatorValue = 0;
+        xTaskCreate(moveGauge, "MoveGauge", 1024, (void *)&speedIndicatorValue, 1, NULL);
     }
 }
 
@@ -1545,7 +1514,9 @@ void moveGauge(void *parameter) {
 }
 
 void sendTrainCommand(Train *train) {
-    send(train->getSpeedCommand());
+    char speedCommand[19];
+    train->getSpeedCommand(speedCommand);
+    send(speedCommand);
     speedIndicatorValue = currentTrain->getSpeed();
     if (currentTrain->getDirection() != 1) {
         speedIndicatorValue = -speedIndicatorValue;
@@ -1590,10 +1561,6 @@ void parseCommand(char *command) {
             float cur = atof(commandTrimmed) / 100;
             trackCurrentSamples.add(cur);
             trackCurrent = trackCurrentSamples.getAverage();
-
-            if (displayState != START) {
-                drawTrackCurrent();
-            }
             break;
     }
 }

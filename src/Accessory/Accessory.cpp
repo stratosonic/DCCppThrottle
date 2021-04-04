@@ -1,6 +1,5 @@
-#include "Arduino.h"
 #include "Accessory.h"
-
+#include "Arduino.h"
 
 Accessory::Accessory() {
     this->setName("Acc");

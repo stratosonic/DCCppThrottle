@@ -1,5 +1,5 @@
-#include "Arduino.h"
 #include "Sensor.h"
+#include "Arduino.h"
 
 Sensor::Sensor() { this->setName("S"); }
 
