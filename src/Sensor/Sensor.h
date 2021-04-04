@@ -8,7 +8,7 @@ class Sensor : public Component {
   private:
   public:
     Sensor();
-    Sensor(String name);
+    Sensor(char *name);
 };
 
 #endif

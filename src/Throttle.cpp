@@ -124,7 +124,7 @@ char previousSpeed[3];
 
 byte menuViewSelection = 0;
 byte previousMenuViewSelection = 0;
-String menuText[] = {"Control Trains", "Turnouts", "Accessories", "Sensors", "Preferences"};
+char menuText[5][15] = {"Control Trains", "Turnouts", "Accessories", "Sensors", "Preferences"};
 #define NUMBER_OF_MENU_ITEMS 5
 
 // Maintain the order of the menu to match the menuText array
@@ -304,32 +304,32 @@ void setup() {
     currentTrain = trainList.get(currentTrainIndex);
 
     // ----------  Add Turnouts  ---------- //
-    Turnout *turnout1 = new Turnout(1, "Turnout 1");
+    Turnout *turnout1 = new Turnout(1, (char *)"Turnout 1");
     turnoutList.add(turnout1);
-    Turnout *turnout2 = new Turnout(2, "Yard 1");
+    Turnout *turnout2 = new Turnout(2, (char *)"Yard 1");
     turnoutList.add(turnout2);
-    Turnout *turnout3 = new Turnout(3, "Yard 2");
+    Turnout *turnout3 = new Turnout(3, (char *)"Yard 2");
     turnoutList.add(turnout3);
-    Turnout *turnout4 = new Turnout(4, "Warehouse");
+    Turnout *turnout4 = new Turnout(4, (char *)"Warehouse");
     turnoutList.add(turnout4);
-    Turnout *turnout5 = new Turnout(5, "Extra A");
+    Turnout *turnout5 = new Turnout(5, (char *)"Extra A");
     turnoutList.add(turnout5);
-    Turnout *turnout6 = new Turnout(6, "Extra B");
+    Turnout *turnout6 = new Turnout(6, (char *)"Extra B");
     turnoutList.add(turnout6);
 
     // ----------  Add Accessories  ---------- //
-    accessoryList.add(new Accessory("A1", 1, 1));
-    accessoryList.add(new Accessory("Light", 1, 2));
-    accessoryList.add(new Accessory("Swing", 1, 3));
-    accessoryList.add(new Accessory("Blah", 1, 4));
+    accessoryList.add(new Accessory((char *)"A1", 1, 1));
+    accessoryList.add(new Accessory((char *)"Light", 1, 2));
+    accessoryList.add(new Accessory((char *)"Swing", 1, 3));
+    accessoryList.add(new Accessory((char *)"Blah", 1, 4));
 
     // ----------  Add Sensors  ---------- //
-    sensorList.add(new Sensor("Snsr 1"));
-    sensorList.add(new Sensor("Snsr 2"));
-    sensorList.add(new Sensor("S 3"));
-    sensorList.add(new Sensor("S 4"));
-    sensorList.add(new Sensor("S 5"));
-    sensorList.add(new Sensor("S 6"));
+    sensorList.add(new Sensor((char *)"Snsr 1"));
+    sensorList.add(new Sensor((char *)"Snsr 2"));
+    sensorList.add(new Sensor((char *)"S 3"));
+    sensorList.add(new Sensor((char *)"S 4"));
+    sensorList.add(new Sensor((char *)"S 5"));
+    sensorList.add(new Sensor((char *)"S 6"));
 
     if (DEBUG == 1) {
         Serial.println(F("Done with setup"));
@@ -529,8 +529,8 @@ void loop() {
 
     // 2Hz (2 times per second)
     if (trackCurrentCounter >= 50) {
-        //Serial.print("free memory: ");
-        //Serial.println(xPortGetFreeHeapSize());
+        Serial.print("free memory: ");
+        Serial.println(xPortGetFreeHeapSize());
         disableTimerInterrupt();
         sendCurrentRequestCommand();
         trackCurrentCounter = 0;
@@ -586,7 +586,9 @@ void loop() {
                 updateTrainFunctions(currentTrain);
             } else if (FOOTER_BUTTON_RIGHT_JUST_PRESSED) {
                 clearButtonStates();
-                /*comm->*/ send(currentTrain->getFunctionCommand());
+                char functionCommand[18];
+                currentTrain->getFunctionCommand(functionCommand);
+                send(functionCommand);
                 updateTrainFunctions(currentTrain);
             } else if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();

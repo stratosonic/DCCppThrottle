@@ -5,12 +5,12 @@ Component::Component() {
     this->active = false;
 }
 
-String Component::getName() {
+char *Component::getName() {
     return this->name;
 }
 
-void Component::setName(String name) {
-    this->name = name;
+void Component::setName(char *name) {
+    strcpy(this->name, name);
 }
 
 void Component::toggleActive() {

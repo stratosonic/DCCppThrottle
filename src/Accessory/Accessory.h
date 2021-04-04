@@ -11,7 +11,7 @@ class Accessory : public Component {
 
   public:
     Accessory();
-    Accessory(String name, int address, int subAddress);
+    Accessory(char *name, int address, int subAddress);
 };
 
 #endif

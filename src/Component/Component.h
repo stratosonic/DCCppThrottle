@@ -5,13 +5,13 @@
 
 class Component {
   private:
-    String name;
+    char name[13];
     boolean active;
 
   public:
     Component();
-    String getName();
-    void setName(String name);
+    char *getName();
+    void setName(char *name);
     void toggleActive();
     boolean isActive();
 };

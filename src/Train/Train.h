@@ -34,7 +34,7 @@ class Train {
     void getSpeedCommand(char *);
     void getEmergencyStopCommand(char *);
     void incrementActiveFunction();
-    String getFunctionCommand();
+    void getFunctionCommand(char *);
 };
 
 #endif

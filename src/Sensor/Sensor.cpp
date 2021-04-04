@@ -3,6 +3,6 @@
 
 Sensor::Sensor() { this->setName("S"); }
 
-Sensor::Sensor(String name) {
+Sensor::Sensor(char *name) {
     this->setName(name);
 }

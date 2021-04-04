@@ -9,7 +9,7 @@ class Turnout : public Component {
     int id;
 
   public:
-    Turnout(int id, String name);
+    Turnout(int id, char *name);
 };
 
 #endif
