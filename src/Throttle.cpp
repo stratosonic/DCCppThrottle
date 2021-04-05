@@ -214,9 +214,9 @@ void parseTCommand(char *command);
 void parseHCommand(char *command);
 void enableTimerInterrupt();
 void disableTimerInterrupt();
-void readResponse(String response);
+void readResponse(char *response);
 void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel);
-void send(String packet);
+void send(char *packet);
 void resetGauge(void *parameter);
 void moveGauge(void *parameter);
 /////
@@ -237,7 +237,7 @@ IPAddress serverip(192, 168, 4, 1);
 #define MAX_ETH_BUFFER 2048
 char recieveBuffer[MAX_ETH_BUFFER];
 
-LinkedList<String> outgoingCommands = LinkedList<String>();
+LinkedList<char *> outgoingCommands = LinkedList<char *>();
 
 unsigned long wifiClientTimeout = 0;
 
@@ -375,19 +375,19 @@ void setup() {
         1);            /* Core where the task should run */
 
     // Send status request
-    send("<s>");
+    send((char *)"<s>");
 
     // Request all defined turnouts
-    send("<T>");
+    send((char *)"<T>");
 
     // Request all defined Sensors
-    send("<S>");
+    send((char *)"<S>");
 
     // Request all defined output pins
-    send("<Z>");
+    send((char *)"<Z>");
 
     // Status of all sensors ???
-    send("<Q>");
+    send((char *)"<Q>");
 }
 
 void enableTimerInterrupt() {
@@ -402,7 +402,6 @@ void disableTimerInterrupt() {
 
 void drawSpinner() {
     tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-    //tft.fillRect(152, 130, FONT_SIZE_2_WIDTH, FONT_SIZE_2_HEIGHT, ILI9341_BLACK);
     tft.setCursor(152, 130);
     tft.print(spinnerArray[spinnerArrayPointer]);
     spinnerArrayPointer++;
@@ -411,10 +410,10 @@ void drawSpinner() {
     }
 }
 
-void readResponse(String response) {
-    int bufferLength = response.length() + 1;
+void readResponse(char *response) {
+    int bufferLength = strlen(response) + 1;
     char buffer[bufferLength] = "";
-    response.toCharArray(buffer, bufferLength);
+    strcpy(buffer, response);
 
     for (int i = 0; i < bufferLength; i++) {
         int c = buffer[i]; //Serial.read();
@@ -436,14 +435,12 @@ void sendTask(void *parameter) {
             xSemaphoreTake(sendReceiveSemaphore, portMAX_DELAY);
             //Serial.print("outgoingCommands size: ");
             //Serial.println(outgoingCommands.size());
-            String packet = outgoingCommands.shift();
+            char *packet = outgoingCommands.shift();
             xSemaphoreGive(sendReceiveSemaphore);
             // Serial.print("outgoing packet: ");
             // Serial.println(packet);
             // unsigned long start = micros();
-
-            wclient.write(packet.c_str());
-
+            wclient.write(packet);
             // unsigned long end = micros();
             // unsigned long time = end - start;
             // Serial.print("send time: ");
@@ -474,9 +471,7 @@ void receiveTask(void *parameter) {
             //unsigned long end = micros();
             recieveBuffer[readBytes] = '>';
             recieveBuffer[readBytes + 1] = '\0';
-            String response = String(recieveBuffer);
-            readResponse(response);
-
+            readResponse(recieveBuffer);
             //Serial.println(recieveBuffer);
             //wclient.setTimeout(wifiClientTimeout);
             //unsigned long time = end - start;
@@ -490,7 +485,7 @@ void receiveTask(void *parameter) {
     }
 }
 
-void send(String packet) {
+void send(char *packet) {
     xSemaphoreTake(sendReceiveSemaphore, portMAX_DELAY);
     //Serial.print("Sending: ");
     //Serial.println(packet);
@@ -1051,9 +1046,10 @@ void drawBlockView(uint8_t numberOfRows, uint8_t numberOfColumns, LinkedList<T> 
                         tft.fillRect(thisBlockX, thisBlockY, boxWidth, boxHeight, blockBackground);
                     }
 
-                    String textUpperLeft = list->get(count)->getName();
+                    // TODO: fix
+                    char *textUpperLeft = list->get(count)->getName();
                     tft.setTextColor(ILI9341_WHITE);
-                    tft.setCursor((thisBlockX + ((boxWidth / 2) - ((textUpperLeft.length() * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + 4);
+                    tft.setCursor((thisBlockX + ((boxWidth / 2) - ((strlen(textUpperLeft) * FONT_SIZE_2_WIDTH) / 2))), thisBlockY + 4);
                     tft.print(textUpperLeft);
 
                     byte innerPaddingX = boxWidth / 8;
@@ -1485,7 +1481,7 @@ void toggleTrackPower() {
 
 void sendTrackPowerCommand() {
     if (trackPower == TRACK_POWER_ON) {
-        send("<1>");
+        send((char *)"<1>");
     } else {
         rotaryEncoder.setEncoderValue(0);
         for (byte i = 0; i < trainList.size(); i++) {
@@ -1494,7 +1490,7 @@ void sendTrackPowerCommand() {
             trainList.get(i)->getEmergencyStopCommand(stopCommand);
             send(stopCommand);
         }
-        send("<0>");
+        send((char *)"<0>");
         speedIndicatorValue = 0;
         xTaskCreate(moveGauge, "MoveGauge", 1024, (void *)&speedIndicatorValue, 1, NULL);
     }
@@ -1516,7 +1512,7 @@ void moveGauge(void *parameter) {
 }
 
 void sendTrainCommand(Train *train) {
-    char speedCommand[19];
+    static char speedCommand[19];
     train->getSpeedCommand(speedCommand);
     send(speedCommand);
     speedIndicatorValue = currentTrain->getSpeed();
@@ -1527,7 +1523,7 @@ void sendTrainCommand(Train *train) {
 }
 
 void sendCurrentRequestCommand() {
-    send("<c>");
+    send((char *)"<c>");
 }
 
 void parseCommand(char *command) {
