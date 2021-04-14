@@ -215,7 +215,7 @@ void parseHCommand(char *command);
 void enableTimerInterrupt();
 void disableTimerInterrupt();
 void readResponse(char *response);
-void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel);
+void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel, bool circleValues);
 void send(char *packet);
 void resetGauge(void *parameter);
 void moveGauge(void *parameter);
@@ -287,7 +287,7 @@ void setup() {
     rotaryEncoder.setup(
         [] { rotaryEncoder.readEncoder_ISR(); },
         [] { rotary_onButtonClick(); });
-    resetRotaryEncoderValues(0, ROT_ENC_TRAIN_SPEED_MIN, ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
+    resetRotaryEncoderValues(0, ROT_ENC_TRAIN_SPEED_MIN, ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL, false);
 
     // Set ports for buttons to inputs with internal pullup
     for (byte i = 0; i < NUMBER_OF_BUTTONS; i++) {
@@ -493,9 +493,9 @@ void send(char *packet) {
     xSemaphoreGive(sendReceiveSemaphore);
 }
 
-void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel) {
+void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel, bool circleValues) {
     rotaryEncoder.setEncoderValue(val);
-    rotaryEncoder.setBoundaries(min, max);
+    rotaryEncoder.setBoundaries(min, max, circleValues);
     rotaryEncoder.setAcceleration(accel);
 }
 
@@ -560,7 +560,7 @@ void loop() {
 
                 displayState = TRAIN_CONTROL;
                 resetRotaryEncoderValues(currentTrain->getSpeed(), ROT_ENC_TRAIN_SPEED_MIN,
-                                         ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
+                                         ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL, false);
             }
             break;
 
@@ -587,9 +587,9 @@ void loop() {
                 updateTrainFunctions(currentTrain);
             } else if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();
-                displayState = MENU;
-                resetRotaryEncoderValues(0, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL);
                 clearView();
+                displayState = MENU;
+                resetRotaryEncoderValues(0, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL, true);
                 drawMenuView();
             }
 
@@ -644,20 +644,23 @@ void loop() {
                 if (menuViewSelection == TRAIN_CONTROL) {
                     displayState = TRAIN_CONTROL;
                     resetRotaryEncoderValues(currentTrain->getSpeed(), ROT_ENC_TRAIN_SPEED_MIN,
-                                             ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL);
+                                             ROT_ENC_TRAIN_SPEED_MAX, ROT_ENC_TRAIN_ACCEL, false);
                     drawTrainView();
                 } else if (menuViewSelection == TURNOUT) {
                     displayState = TURNOUT;
-                    resetRotaryEncoderValues(0, -1, turnoutList.size(), 0);
+                    resetRotaryEncoderValues(0, 0, turnoutList.size(), 0, true);
                     drawTurnoutView();
                 } else if (menuViewSelection == ACCESSORIES) {
                     displayState = ACCESSORIES;
+                    resetRotaryEncoderValues(0, 0, accessoryList.size(), 0, true);
                     drawAccessoriesView();
                 } else if (menuViewSelection == SENSORS) {
                     displayState = SENSORS;
+                    resetRotaryEncoderValues(0, 0, sensorList.size(), 0, true);
                     drawSensorsView();
                 } else if (menuViewSelection == PREFERENCES) {
                     displayState = PREFERENCES;
+                    resetRotaryEncoderValues(0, 0, 5, 0, true);
                     drawPreferencesView();
                 }
             }
@@ -668,41 +671,26 @@ void loop() {
         case TURNOUT:
             if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();
-                displayState = MENU;
                 clearView();
+                displayState = MENU;
+                resetRotaryEncoderValues(1, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL, true);
                 drawMenuView();
-            }
-
-            switch (encoderState) {
-
-                case PREVIOUS:
-                    clearEncoderState();
-                    selectedTurnout--;
-                    if (selectedTurnout < 0) {
-                        selectedTurnout = turnoutList.size() - 1;
+            } else {
+                {
+                    if (rotaryEncoder.encoderChanged()) {
+                        selectedTurnout = rotaryEncoder.readEncoder();
+                        Serial.println(selectedTurnout);
+                        drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
+                        previousTurnout = selectedTurnout;
                     }
-                    drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
-                    previousTurnout = selectedTurnout;
-                    break;
-                case NEXT:
-                    clearEncoderState();
-                    selectedTurnout++;
-                    if (selectedTurnout > turnoutList.size() - 1) {
-                        selectedTurnout = 0;
-                    }
+                }
 
+                if (ENCODER_BUTTON_JUST_PRESSED) {
+                    clearButtonStates();
+                    Turnout *turnout = turnoutList.get(selectedTurnout);
+                    turnout->toggleActive();
                     drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
-                    previousTurnout = selectedTurnout;
-                    break;
-                default:
-                    break;
-            }
-
-            if (ENCODER_BUTTON_JUST_PRESSED) {
-                clearButtonStates();
-                Turnout *turnout = turnoutList.get(selectedTurnout);
-                turnout->toggleActive();
-                drawBlockView(TURNOUT_ROWS, TURNOUT_COLUMNS, &turnoutList, selectedTurnout, previousTurnout, false);
+                }
             }
             break;
 
@@ -710,40 +698,25 @@ void loop() {
         case ACCESSORIES:
             if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();
-                displayState = MENU;
                 clearView();
+                displayState = MENU;
+                resetRotaryEncoderValues(2, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL, true);
                 drawMenuView();
-            }
-
-            switch (encoderState) {
-                case PREVIOUS:
-                    clearEncoderState();
-                    if (selectedAccessory == 0) {
-                        selectedAccessory = accessoryList.size() - 1;
-                    } else {
-                        selectedAccessory--;
+            } else {
+                {
+                    if (rotaryEncoder.encoderChanged()) {
+                        selectedAccessory = rotaryEncoder.readEncoder();
+                        drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+                        previousAccessory = selectedAccessory;
                     }
-                    drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
-                    previousAccessory = selectedAccessory;
-                    break;
-                case NEXT:
-                    clearEncoderState();
-                    selectedAccessory++;
-                    if (selectedAccessory > accessoryList.size() - 1) {
-                        selectedAccessory = 0;
-                    }
-                    drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
-                    previousAccessory = selectedAccessory;
-                    break;
-                default:
-                    break;
-            }
+                }
 
-            if (ENCODER_BUTTON_JUST_PRESSED) {
-                clearButtonStates();
-                Accessory *accessory = accessoryList.get(selectedAccessory);
-                accessory->toggleActive();
-                drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+                if (ENCODER_BUTTON_JUST_PRESSED) {
+                    clearButtonStates();
+                    Accessory *accessory = accessoryList.get(selectedAccessory);
+                    accessory->toggleActive();
+                    drawBlockView(ACCESSORY_ROWS, ACCESSORY_COLUMNS, &accessoryList, selectedAccessory, previousAccessory, false);
+                }
             }
             break;
 
@@ -751,40 +724,25 @@ void loop() {
         case SENSORS:
             if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();
-                displayState = MENU;
                 clearView();
+                displayState = MENU;
+                resetRotaryEncoderValues(3, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL, true);
                 drawMenuView();
-            }
-
-            switch (encoderState) {
-                case PREVIOUS:
-                    clearEncoderState();
-                    if (selectedSensor == 0) {
-                        selectedSensor = sensorList.size() - 1;
-                    } else {
-                        selectedSensor--;
+            } else {
+                {
+                    if (rotaryEncoder.encoderChanged()) {
+                        selectedSensor = rotaryEncoder.readEncoder();
+                        drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+                        previousSensor = selectedSensor;
                     }
-                    drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
-                    previousSensor = selectedSensor;
-                    break;
-                case NEXT:
-                    clearEncoderState();
-                    selectedSensor++;
-                    if (selectedSensor > sensorList.size() - 1) {
-                        selectedSensor = 0;
-                    }
-                    drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
-                    previousSensor = selectedSensor;
-                    break;
-                default:
-                    break;
-            }
+                }
 
-            if (ENCODER_BUTTON_JUST_PRESSED) {
-                clearButtonStates();
-                Sensor *sensor = sensorList.get(selectedSensor);
-                sensor->toggleActive();
-                drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+                if (ENCODER_BUTTON_JUST_PRESSED) {
+                    clearButtonStates();
+                    Sensor *sensor = sensorList.get(selectedSensor);
+                    sensor->toggleActive();
+                    drawBlockView(SENSOR_ROWS, SENSOR_COLUMNS, &sensorList, selectedSensor, previousSensor, false);
+                }
             }
             break;
 
@@ -792,8 +750,9 @@ void loop() {
         case PREFERENCES:
             if (MENU_BUTTON_JUST_PRESSED) {
                 clearButtonStates();
-                displayState = MENU;
                 clearView();
+                displayState = MENU;
+                resetRotaryEncoderValues(4, ROT_ENC_MENU_MIN, ROT_ENC_MENU_MAX, ROT_ENC_MENU_ACCEL, true);
                 drawMenuView();
             }
             break;
