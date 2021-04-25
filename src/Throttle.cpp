@@ -494,8 +494,8 @@ void send(char *packet) {
 }
 
 void resetRotaryEncoderValues(long val, long min, long max, unsigned long accel, bool circleValues) {
-    rotaryEncoder.setEncoderValue(val);
     rotaryEncoder.setBoundaries(min, max, circleValues);
+    rotaryEncoder.setEncoderValue(val);
     rotaryEncoder.setAcceleration(accel);
 }
 
@@ -524,8 +524,8 @@ void loop() {
 
     // 2Hz (2 times per second)
     if (trackCurrentCounter >= 50) {
-        Serial.print("free memory: ");
-        Serial.println(xPortGetFreeHeapSize());
+        //Serial.print("free memory: ");
+        //Serial.println(xPortGetFreeHeapSize());
         disableTimerInterrupt();
         sendCurrentRequestCommand();
         trackCurrentCounter = 0;
