@@ -84,60 +84,16 @@ void Train::incrementActiveFunction() {
 }
 
 void Train::getFunctionCommand(char *command) {
-    int functionNumber = this->activeFunction;
-    this->functions = this->functions ^ (1UL << functionNumber);
-    Serial.println(functionNumber);
-
-    uint32_t functionTransmission;
-
-    if (functionNumber < 5) {
-        byte mask = 31;
-        functionTransmission = this->functions & mask;
-        // swap F0 and F4 bits
-        byte f0 = bitRead(functionTransmission, 0);
-        byte f4 = bitRead(functionTransmission, 4);
-        if (f0) {
-            bitSet(functionTransmission, 4);
-        } else {
-            bitClear(functionTransmission, 4);
-        }
-        if (f4) {
-            bitSet(functionTransmission, 0);
-        } else {
-            bitClear(functionTransmission, 0);
-        }
-        functionTransmission += 128;
-        functionTransmission = (byte)functionTransmission;
-        sprintf(command, "<f %d %u>", this->address, functionTransmission);
-    } else if (functionNumber < 9) {
-        int mask = 15;
-        functionTransmission = this->functions & mask << 5;
-        functionTransmission = functionTransmission >> 5;
-        functionTransmission += 176;
-        functionTransmission = (int)functionTransmission;
-        sprintf(command, "<f %d %u>", this->address, functionTransmission);
-    } else if (functionNumber < 13) {
-        int mask = 15;
-        functionTransmission = this->functions & mask << 9;
-        functionTransmission = functionTransmission >> 9;
-        functionTransmission += 160;
-        functionTransmission = (int)functionTransmission;
-        sprintf(command, "<f %d %u>", this->address, functionTransmission);
-    } else if (functionNumber < 21) {
-        uint32_t mask = 255;
-        functionTransmission = this->functions & mask << 13;
-        functionTransmission = functionTransmission >> 13;
-        functionTransmission = (uint32_t)functionTransmission;
-        sprintf(command, "<f %d %d %u>", this->address, 222, functionTransmission);
+    if (bitRead(this->functions, this->activeFunction)) {
+        bitClear(this->functions, this->activeFunction);
     } else {
-        uint32_t mask = 255;
-        functionTransmission = this->functions & mask << 21;
-        functionTransmission = functionTransmission >> 21;
-        functionTransmission = (uint32_t)functionTransmission;
-        sprintf(command, "<f %d %d %u>", this->address, 223, functionTransmission);
+        bitSet(this->functions, this->activeFunction);
     }
-    //Serial.print("Command: ");
-    //Serial.println(output);
-    //Serial.print("Binary = ");
-    //Serial.println(functionTransmission, BIN);
+
+    sprintf(command, "<F %d %u %u>",
+            this->address,
+            this->activeFunction,
+            bitRead(this->functions, this->activeFunction));
+    // Serial.print("function command: ");
+    // Serial.println(command);
 }

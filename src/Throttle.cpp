@@ -581,7 +581,7 @@ void loop() {
                 updateTrainFunctions(currentTrain);
             } else if (FOOTER_BUTTON_RIGHT_JUST_PRESSED) {
                 clearButtonStates();
-                char functionCommand[18];
+                static char functionCommand[15];
                 currentTrain->getFunctionCommand(functionCommand);
                 send(functionCommand);
                 updateTrainFunctions(currentTrain);
